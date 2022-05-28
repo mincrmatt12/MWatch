@@ -1,0 +1,93 @@
+.program ls012_vclk
+
+; Generate "vertical timing" pulses
+
+; first generate  intB timing (via sideset)
+
+.side_set 2
+
+.wrap_target
+                           ; side set has INTB, GSP
+						   ; gpio out has GCK
+	mov x, y          side 0b10        ; cdiv set so that 4 clock cycles ≈ 11us
+	; set gck low
+	set pins, 0       side 0b11    [7]
+	; first gck pulse
+	set pins, 1       side 0b11    [6]
+	jmp startit       side 0b11
+bitloop:
+	wait 1 irq 1      side 0b10
+startit:
+	mov pins, !pins   side 0b10    
+	irq 2             side 0b10
+	jmp x--, bitloop  side 0b10
+	; fix clock cycle
+	nop               side 0b10   [4]
+	; now we have output all 480 bitplanes, do one final clock pulse
+	set pins, 0       side 0b10   [7]
+	set pins, 1       side 0b10   [7]
+public entry_point:
+	set pins, 0       side 0b00 
+	pull block        side 0b00 ; wait for next frame
+.wrap
+
+
+.program ls012_hclk
+
+; Generate "horizontal timing" pulses
+
+.side_set 3
+
+; main display clock loop: 
+
+.wrap_target
+public entry_point:
+	; wait for GCK to be ready
+	wait 1 irq 2        side  0b000
+	; side set is configured to contain BCK, BSP, GEN
+	; assert start + initialize loop counter
+	; clock divider set to have half clockspeed of dataout
+	mov x, y            side  0b010 [1]
+	; assert start signal + tell inner loop to start sending data
+	irq 0               side  0b110 [2] ; wait 1 extra cycle to align with loop (3 cycles * 3 = 6 cycle delay)
+lineloop:  ; each iteration is 4 pixels, 60 iterations sets y to 60 first
+	; generate clock pulses while waiting for end of line
+	nop                 side  0b000 [2]; clock negative (3 cycles * 2 = 6 cycles of low)
+	jmp x--, lineloop   side  0b100 [2]; clock positive (6 more cycles)
+	; we are now on clock cycle 121, set to zero for clock cycle 122 then tell the outer machine to flip gck
+	nop                 side  0b000 [2]
+	set x, 16           side  0b101 [2] ; setup delay counter
+delayloop:
+    jmp x--, delayloop  side  0b001 [3] ; delay to hold GEN high for the required time
+	; after delay, ping vclk machine to flip GCK
+	irq 1               side  0b001 [3]; wait for GCK to be flipped 
+.wrap ; jump back to start next bitplane
+
+
+
+.program ls012_dataout
+
+.wrap_target
+pixloop:
+	; read odd pixel
+	in osr, 3               
+	; discard extra bytes
+	out null, 5
+	; read even pixel
+	in osr, 3
+	out null, 5
+	; send pins to output
+	mov pins, isr          
+	; reset isr
+	mov isr, null
+	; are we done yet?
+	jmp x--, pixloop
+	; we are: prepare for the next set
+	; shift 3 bits to offset to msb
+	out null, 3
+	; reset x to y (y is set to 120 at start by cpu)
+public entry_point:
+	mov x, y
+	; wait for next line clock to start
+	wait 1 irq 0   [3] ; if the display cycle has ended, this will be reset to 0.
+.wrap ; jump back to start of loop
