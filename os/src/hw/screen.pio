@@ -1,93 +1,89 @@
-.program ls012_vclk
-
-; Generate "vertical timing" pulses
-
-; first generate  intB timing (via sideset)
-
-.side_set 2
-
-.wrap_target
-                           ; side set has INTB, GSP
-						   ; gpio out has GCK
-	mov x, y          side 0b10        ; cdiv set so that 4 clock cycles ≈ 11us
-	; set gck low
-	set pins, 0       side 0b11    [7]
-	; first gck pulse
-	set pins, 1       side 0b11    [6]
-	jmp startit       side 0b11
-bitloop:
-	wait 1 irq 1      side 0b10
-startit:
-	mov pins, !pins   side 0b10    
-	irq 2             side 0b10
-	jmp x--, bitloop  side 0b10
-	; fix clock cycle
-	nop               side 0b10   [4]
-	; now we have output all 480 bitplanes, do one final clock pulse
-	set pins, 0       side 0b10   [7]
-	set pins, 1       side 0b10   [7]
-public entry_point:
-	set pins, 0       side 0b00 
-	pull block        side 0b00 ; wait for next frame
-.wrap
+; first: the data out
 
 
-.program ls012_hclk
-
-; Generate "horizontal timing" pulses
-
-.side_set 3
-
-; main display clock loop: 
-
-.wrap_target
-public entry_point:
-	; wait for GCK to be ready
-	wait 1 irq 2        side  0b000
-	; side set is configured to contain BCK, BSP, GEN
-	; assert start + initialize loop counter
-	; clock divider set to have half clockspeed of dataout
-	mov x, y            side  0b010 [1]
-	; assert start signal + tell inner loop to start sending data
-	irq 0               side  0b110 [2] ; wait 1 extra cycle to align with loop (3 cycles * 3 = 6 cycle delay)
-lineloop:  ; each iteration is 4 pixels, 60 iterations sets y to 60 first
-	; generate clock pulses while waiting for end of line
-	nop                 side  0b000 [2]; clock negative (3 cycles * 2 = 6 cycles of low)
-	jmp x--, lineloop   side  0b100 [2]; clock positive (6 more cycles)
-	; we are now on clock cycle 121, set to zero for clock cycle 122 then tell the outer machine to flip gck
-	nop                 side  0b000 [2]
-	set x, 16           side  0b101 [2] ; setup delay counter
-delayloop:
-    jmp x--, delayloop  side  0b001 [3] ; delay to hold GEN high for the required time
-	; after delay, ping vclk machine to flip GCK
-	irq 1               side  0b001 [3]; wait for GCK to be flipped 
-.wrap ; jump back to start next bitplane
-
-
+.define IRQ_HSYNC 0
+.define IRQ_VSYNC 1
+.define public IRQ_DONE  2   ; routed to CPU: set high on frame done; clear to _start next frame_ (so clear the inte flag then exit handler, then on next frame actually clear status)
 
 .program ls012_dataout
 
+;; DATAOUT: run at 24mhz, 10 cycles = 416 ns (in spec), hold time == 5 cyc, perfectly to spec    || clkdiv 4   from 96
+;; HCLK:    run at 12mhz, 5 cycles = 416 ns;  1 cyc = 83ns                                       || clkdiv 8   from 96
+;; VCLK:    run at 274khz                                                                        || clkdiv 350 from 96 
+
 .wrap_target
-pixloop:
-	; read odd pixel
-	in osr, 3               
-	; discard extra bytes
-	out null, 5
-	; read even pixel
-	in osr, 3
-	out null, 5
-	; send pins to output
-	mov pins, isr          
-	; reset isr
-	mov isr, null
-	; are we done yet?
-	jmp x--, pixloop
-	; we are: prepare for the next set
-	; shift 3 bits to offset to msb
-	out null, 3
-	; reset x to y (y is set to 120 at start by cpu)
-public entry_point:
+	; reset counter
 	mov x, y
-	; wait for next line clock to start
-	wait 1 irq 0   [3] ; if the display cycle has ended, this will be reset to 0.
-.wrap ; jump back to start of loop
+pixloop:
+	; sync with ls012_hclk  ( and wait for frame start )
+	wait 1 irq IRQ_HSYNC         [5] ;; ------ DATAOUT ---------- HCLK -------  0 cycles (sync'd here) TODO: may need some tweaking   (loop, 10/5 cyc)
+	; BEGIN OUTPUTTING               ;;                       
+	                                 ;;                        1cyc (during wait postdelay) <--- clock changed (previous value asserted)
+									 ;;                        2cyc (during wait postdelay)    |
+	out pins, 6                      ;; 7  cyc                 3.5cyc    (actual output)  <----|  new data asserted (halfway through)
+	out null, 10                 [1] ;; 8  cyc                 4cyc
+	; loop                                                                            
+	jmp x--, pixloop                 ;; 9 cyc                      
+	; AFTER LOOP: reset pins
+	; mov pins, null
+.wrap ; jump back for next line
+	
+.program ls012_hclk
+
+.define thwGEN 31   ; 31 * 4 = 124 clock cycles = 10.3 us (in spec)
+.define thhGCK 12   ; 10 * 4 = 40  clock cycles = ~4us
+
+.side_set 2 opt ; sideset: BSP,GEN
+; two bits for delays: should be just barely enough
+
+.wrap_target
+    ; entry point: setup BSP
+    mov x, y               side 0b10   [3]      ;; setup GSP (assume GCK is already low -- it should be, and the init code sets it there as well)
+	mov pins, ~null                    [3]      ;; pulse clock (-1 delay for irq)
+pixloop:   
+	irq wait IRQ_HSYNC                          ;; SYNC WITH DATAOUT (both should continue execution at same time afaict)
+	mov pins, ~pins                                        
+	jmp x--, pixloop       side 0b00            ;; RESET GSP (do it now to look slightly more like the datasheet since we can)
+	; AFTER LINE done; do GEN pulse (GCK should now have just been set to zero -- delay)
+	set x, (thwGEN-3)                  [2]      ;; full clock cycle  (-1 from jump, -1 from counter)  ---- setup thwGEN
+	mov pins, null         side 0b01   [3]
+gendelay:
+	jmp x--, gendelay                  [3]      ;; keep gen pulsed
+	set x, (thhGCK-1)      side 0b00   [1]      ;; +0.5
+gckdelay:
+	jmp x--, gckdelay                  [3]
+public entry_point:
+	wait 1 irq IRQ_VSYNC                  
+	wait 1 irq IRQ_VSYNC                  
+.wrap
+
+.program ls012_vclk
+
+.define thsINTB_GSP 3
+.define thwGCK 16 ; 16 total cycles: just under the proper time but whatever
+.side_set 1 ; GSP only
+
+.wrap_target
+   ; wait for notification from cpu to start -- CPU MUST ASSERT INTB at this point by writing the correct instruction here
+   irq wait IRQ_DONE                  side 0
+   set pins, 0b01     [thsINTB_GSP]   side 0
+   ; turn on start pulse + setup counter
+   mov x, y           [thsINTB_GSP]   side 1
+   ; hold one clock cycle
+   set pins, 0b11     [thwGCK-1]      side 1
+lineloop:
+   ; sync with horizontal
+   irq wait IRQ_VSYNC                 side 0   ; reset GSP from first loop
+   ; flip gck
+   mov pins, ~pins                    side 0   
+   irq wait IRQ_VSYNC                 side 0   ; notify GSP done (triggers actual pulse)
+   ; loop
+   jmp x--, lineloop                  side 0
+   ; DONE SCREEN, one final clock cycle
+   mov pins, ~null    [thwGCK-1]      side 0
+   mov pins,  null    [thwGCK-1]      side 0
+   mov pins, ~null    [thwGCK-1]      side 0
+   mov pins,  null    [3]             side 0
+   set pins, 0b00                     side 0
+   ; CPU gets notification from irq; it should clear out the clk / whatever with some expediency 
+.wrap

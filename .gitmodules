@@ -1,0 +1,6 @@
+[submodule "board/libraries/rp2040"]
+	path = board/libraries/rp2040
+	url = https://github.com/HeadBoffin/RP_Silicon_KiCad
+[submodule "vendor/pico-sdk"]
+	path = vendor/pico-sdk
+	url = https://github.com/raspberrypi/pico-sdk
