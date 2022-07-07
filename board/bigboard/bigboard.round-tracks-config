@@ -1,0 +1,6 @@
+Default	True	2.0	3
+DiffPair	False	2.0	3
+PWR	True	1.0	3
+WPOut	True	1.0	3
+WirelessPower	False	2.0	3
+False	True
