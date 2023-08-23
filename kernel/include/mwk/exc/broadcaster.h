@@ -40,22 +40,22 @@ namespace mwk::exc {
 			}
 		}
 
+		struct value_awaiter {
+			typename source_t::resume_token t;
+
+			bool await_ready() const {
+				return t.extra_data.received.has_value();
+			}
+			Event&& await_resume() {
+				return std::move(t.extra_data.received).value();
+			}
+			std::coroutine_handle<> await_suspend(std::coroutine_handle<> task) {
+				t.token.suspend_with_task(task);
+				return t.token.tail_call();
+			}
+		};
+
 		auto wait() {
-			struct value_awaiter {
-				typename source_t::resume_token t;
-
-				bool await_ready() const {
-					return t.extra_data.received.has_value();
-				}
-				Event&& await_resume() {
-					return std::move(t.extra_data.received).value();
-				}
-				std::coroutine_handle<> await_suspend(std::coroutine_handle<> task) {
-					t.token.suspend_with_task(task);
-					return t.token.tail_call();
-				}
-			};
-
 			if (event_awaiting_processing()) {
 				return value_awaiter {
 					.t {

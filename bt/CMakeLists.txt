@@ -53,7 +53,7 @@ target_compile_definitions(mdk_sys PUBLIC
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../kernel mwkernel)
 
 target_compile_options(mdk_sys PUBLIC
-	$<$<COMPILE_LANGUAGE:CXX>: -fno-threadsafe-statics -Wno-register -Wno-volatile>
+	$<$<COMPILE_LANGUAGE:CXX>: -fno-threadsafe-statics -Wno-register>
 )
 
 add_library(mwbt_linkscript INTERFACE)

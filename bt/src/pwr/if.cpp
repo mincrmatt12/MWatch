@@ -19,7 +19,7 @@ namespace bt::pwr {
 		return cfg;
 	}
 
-	void enable_rp2040(bool on) {
+	mwk::task<void, pwr_error> enable_rp2040(bool on) {
 		auto buck2 = get_11v_config();
 		auto ldo2  = get_32v_config();
 
@@ -28,25 +28,21 @@ namespace bt::pwr {
 			// Enable 1.1v
 			buck2.enabled = true;
 			buck2.write_to(buffer);
-			start_apcmd((uint8_t)PmicOpcode::Buck2_Config_Write, buffer, 4);
-			wait_apcmd_sync();
+			co_await run_apcmd((uint8_t)PmicOpcode::Buck2_Config_Write, buffer, 4);
 			// Enable 3.2v
 			ldo2.enabled = true;
 			ldo2.write_to(buffer);
-			start_apcmd((uint8_t)PmicOpcode::LDO2_Config_Write, buffer, 2);
-			wait_apcmd_sync();
+			co_await run_apcmd((uint8_t)PmicOpcode::LDO2_Config_Write, buffer, 2);
 		}
 		else {
 			// Disable 3.2v
 			ldo2.enabled = false;
 			ldo2.write_to(buffer);
-			start_apcmd((uint8_t)PmicOpcode::LDO2_Config_Write, buffer, 2);
-			wait_apcmd_sync();
+			co_await run_apcmd((uint8_t)PmicOpcode::LDO2_Config_Write, buffer, 2);
 			// Disable 1.1v
 			buck2.enabled = false;
 			buck2.write_to(buffer);
-			start_apcmd((uint8_t)PmicOpcode::Buck2_Config_Write, buffer, 4);
-			wait_apcmd_sync();
+			co_await run_apcmd((uint8_t)PmicOpcode::Buck2_Config_Write, buffer, 4);
 		}
 	}
 }

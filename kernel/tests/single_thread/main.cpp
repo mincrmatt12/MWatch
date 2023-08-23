@@ -31,14 +31,20 @@ mwk::ecf::task<int> summationiser(int offset) {
 }
 
 mwk::ecf::task<void> receive_message() {
-	int r = (co_await gate.wait()).x;
-	std::cout << "Got message: " << r << "\n";
+	for (int i = 0; i < 5; ++i) {
+		int r = (co_await gate.wait()).x;
+		std::cout << "Got message: " << r << "\n";
+	}
 }
 
 int main() {
 	global_task_manager.detach_task(summationiser(0));
 	global_task_manager.detach_task(summationiser(1));
 	global_task_manager.detach_task(send_at(20, 4));
+	global_task_manager.detach_task(send_at(25, 6));
+	global_task_manager.detach_task(send_at(23, 9));
+	global_task_manager.detach_task(send_at(21, 10));
+	global_task_manager.detach_task(send_at(21, 11));
 	global_task_manager.detach_task(receive_message());
 
 	while (global_task_manager.has_waiting_tasks()) {

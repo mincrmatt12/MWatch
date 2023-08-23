@@ -6,8 +6,10 @@
 namespace bt::pwr {
 	// Direct chip control routines.
 	enum struct pwr_error : uint16_t {
-		timeout,
-		nak,
+		driver_busy,
+		chip_nak,
+		internal_error,
+		too_large,
 
 		max
 	};
@@ -233,6 +235,7 @@ namespace bt::pwr {
 	mwk::task<uint32_t, pwr_error> read_interrupts();
 
 	// Run an APCMD
+	mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, int argc=7);
 	mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, uint8_t *resp, int argc=7, int resc=6);
 
 	// AP command wrappers:

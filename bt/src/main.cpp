@@ -1,19 +1,28 @@
 #include "pwr/chip.h"
 #include "pwr/if.h"
 
+#include <mwk/exc/task_manager.h>
+
 using namespace bt;
 
+mwk::exc::task_manager global_tm;
+
+mwk::task<void> prepare_hw() {
+	if ((co_await pwr::enable_rp2040(true).result()).is_error()) {
+		// TODO: PANIC
+	}
+}
+
 int main() {
-	// MAIN BT BOOT
-	//
-	// First priority: enable the RP2040 and wait for it to come up.
-	
+	// INIT HARDWARE (not coroutines; pre-scheduler coming online)
 	pwr::init();
 
-	uint8_t sts[2];
+	// call prepare_hw
+	global_tm.detach_task(prepare_hw()); // todo: check result
 
-	pwr::read_register((uint8_t)pwr::PmicDirectRegister::HardwareID, sts, 2);
-	pwr::enable_rp2040(true);
-
-	while (1) {;}
+	// SCHEDULER LOOP
+	while (1) {
+		while (global_tm.ready_to_resume()) global_tm.pop_next().resume();
+		// ticks, etc.
+	}
 }
