@@ -14,16 +14,29 @@
 #include <screen.pio.h>
 
 namespace mwos::screen {
-	alignas(uint16_t) uint8_t fb_data[240*240];
+	// FRAMEBUFFER LAYOUT:
+	//
+	// Stored in a format that makes it relatively easy to scanout via PIO.
+	//
+	// Really an array of 240 lines of 120 two-pixel 16-bit entries.
+	//
+	// First value is lsbs: 0bXX'bgrBGR  (capitals are 0-indexed even pixels, lowercase is odd)
+	//       next  is msbs: 0bXX'bgrBGR  
+	//
+	//       XXs are ignored by hardware and can be used for whatever (for example, to store alpha/priority bits)
+	//
+	// When accessing aligned pairs of bits, just writing a single value to the array works; however manipulating a single pixel requires
+	// bitwise operations.
+	uint16_t fb_data[120*240];
 
 	const static inline uint reconfig_dma = 0;
 	const static inline uint fifo_dma = 1;
 
 	struct fb_tx_list {
 		struct {
-			uint32_t ctrl; uint32_t write_addr; uint32_t len; const uint8_t * row_ptr;
+			uint32_t ctrl; uint32_t write_addr; uint32_t len; const uint16_t * row_ptr;
 		} list[1 + (240 * 4)]{};
-		alignas(uint16_t) uint8_t blank[4]{};
+		uint16_t blank[2] {0, 0};
 		constexpr fb_tx_list() {
 			uint32_t ctrl_noswap = 
 				/* chain to fifo dma */ (reconfig_dma << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB) |
@@ -33,13 +46,13 @@ namespace mwos::screen {
 				/* high priority */     DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS | DMA_CH0_CTRL_TRIG_EN_BITS;
 
 			uint32_t ctrl_swap = ctrl_noswap | DMA_CH0_CTRL_TRIG_BSWAP_BITS;
-			uint32_t write_addr = PIO0_BASE + PIO_TXF2_OFFSET;
+			uint32_t write_addr = PIO0_BASE + PIO_TXF2_OFFSET; // use address to avoid non-const ptr-to-int cast
 
 			int i = 0;
 			for (int row = 0; row < 240; ++row) {
-				list[i++] = {.ctrl = ctrl_swap   , .write_addr = write_addr , .len = 120 , .row_ptr = &fb_data[240*row]};     // 120 16-bit transfers (for msbs)
+				list[i++] = {.ctrl = ctrl_swap   , .write_addr = write_addr , .len = 120 , .row_ptr = &fb_data[120*row]};     // 120 16-bit transfers (for msbs)
 				list[i++] = {.ctrl = ctrl_swap   , .write_addr = write_addr , .len = 2   , .row_ptr = &blank[0]};             // 2 more fake transfers to finish line
-				list[i++] = {.ctrl = ctrl_noswap , .write_addr = write_addr , .len = 120 , .row_ptr = &fb_data[240*row]};     // same 120 transfers, now not swapped to get lsbs
+				list[i++] = {.ctrl = ctrl_noswap , .write_addr = write_addr , .len = 120 , .row_ptr = &fb_data[120*row]};     // same 120 transfers, now not swapped to get lsbs
 				list[i++] = {.ctrl = ctrl_noswap , .write_addr = write_addr , .len = 2   , .row_ptr = &blank[0]};             
 			}
 			list[i++] = {.ctrl = ctrl_swap, .len = 0, .row_ptr = nullptr}; // final transfer with null trigger to stop channel
@@ -48,7 +61,7 @@ namespace mwos::screen {
 
 	constexpr fb_tx_list fb_dma_tx_list{};
 
-	void ls012b7dd06::power_up() {
+	void power_up() {
 		// STEP 1: TURN ON POWER SUPPLIES
 
 		pwr::set_3v2_enable(true);
@@ -62,6 +75,7 @@ namespace mwos::screen {
 		PIO pio = pio0;
 
 		// add the three programs
+		pio_clear_instruction_memory(pio);
 		auto vclk_offset = pio_add_program(pio, &ls012_vclk_program);
 		auto hclk_offset = pio_add_program(pio, &ls012_hclk_program);
 		auto data_offset = pio_add_program(pio, &ls012_dataout_program);
@@ -90,6 +104,7 @@ namespace mwos::screen {
 		 * GPIO11   - R1
 		 * GPIO12   - G1
 		 * GPIO13   - B1
+		 *
 		 */
 		pio_sm_set_consecutive_pindirs(pio, 0, 2, 3, true); 
 		pio_sm_set_consecutive_pindirs(pio, 1, 5, 3, true); 
@@ -100,11 +115,13 @@ namespace mwos::screen {
 		// set gpio outs
 		for (int i = 2; i < 14; ++i) {
 			pio_gpio_init(pio, i);
-			gpio_set_slew_rate(i, GPIO_SLEW_RATE_FAST);
+			gpio_set_drive_strength(i, GPIO_DRIVE_STRENGTH_4MA);
+			gpio_disable_pulls(i);
+			gpio_set_slew_rate(i, GPIO_SLEW_RATE_FAST); //-- supposedly not necessary even for stuff like dvi?
 		}
 
 		auto vclk_config = ls012_vclk_program_get_default_config(vclk_offset);
-		sm_config_set_clkdiv_int_frac(&vclk_config, 350, 0);
+		sm_config_set_clkdiv_int_frac(&vclk_config, 384, 0);
 		sm_config_set_sideset_pins(&vclk_config, 4); // gsp
 		sm_config_set_set_pins(&vclk_config, 2, 2);  // gck (for inverting)
 		sm_config_set_out_pins(&vclk_config, 3, 1);  // mov pins out
@@ -154,43 +171,109 @@ namespace mwos::screen {
 
 		puts("execed insns");
 
-		// STEP 2: INITIALIZATION
-		// (send all black frame)
-		
-		memset(fb_data, 0x00, sizeof fb_data);  // clear framebuffer
-		scanout_frame(); // todo: make this actually properly clear the fifo at the end lol
+		// setup reconfigure dma
 
-		// wait for whatever
-		while (!is_finished_scanning()) tight_loop_contents();
-
-		sleep_us(11);
-
-		scanout_frame();
-	}
-
-	bool ls012b7dd06::is_finished_scanning() {
-		return pio_interrupt_get(pio0, 2);
-	}
-	
-	void ls012b7dd06::scanout_frame() {
-		// set INTB high
-		// pio_sm_exec_wait_blocking(pio0, 0, pio_encode_set(pio_pins, 1));
-		// prepare dma
-		puts("reset thing");
-		
 		auto reconfig_dma_config = dma_channel_get_default_config(reconfig_dma);
 		channel_config_set_ring(&reconfig_dma_config, true, 4); // reconfigure last 2 bits
 		channel_config_set_transfer_data_size(&reconfig_dma_config, DMA_SIZE_32); // send full address 
 		channel_config_set_write_increment(&reconfig_dma_config, true);
 		channel_config_set_read_increment(&reconfig_dma_config, true); 
 
-		// immediately start
-		dma_channel_configure(reconfig_dma, &reconfig_dma_config, &dma_hw->ch[fifo_dma].al3_ctrl, &fb_dma_tx_list.list[0], 4, true);
-		puts("dma going");
-		// start by ack-ing interrupt
-		pio_clkdiv_restart_sm_mask(pio0, 0b111);
-		pio_interrupt_clear(pio0, 2);
+		// prepare for start.
+		dma_channel_configure(reconfig_dma, &reconfig_dma_config, &dma_hw->ch[fifo_dma].al3_ctrl, &fb_dma_tx_list.list[0], 4, false);
+
+		// STEP 2: INITIALIZATION
+		// (send all black frame)
+		
+		memset(fb_data, 0x00, sizeof fb_data);  // clear framebuffer
+		scanout_frame(); 
+
+		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
+
+		sleep_us(120); // datasheet says >= 30us
+
+		// STEP 3: Start VCOM/VA/VB driver
+		//
+		// on pins 14/15 / pwm 7
+		//
+		// VA      -- GPIO14
+		// VB/VCOM -- GPIO15
+		// roughly targeting 10hz (in power saving mode we might hae a slow enough clock to goto the min of 0.25hz but in 96mhz mode we don't)
+
+		gpio_set_function(14, GPIO_FUNC_PWM);
+		gpio_set_function(15, GPIO_FUNC_PWM);
+		gpio_disable_pulls(14);
+		gpio_disable_pulls(15);
+
+		auto pwm_cfg = pwm_get_default_config();
+		pwm_config_set_clkdiv_int(&pwm_cfg, 200);
+		pwm_config_set_wrap(&pwm_cfg, 47999);
+		pwm_config_set_output_polarity(&pwm_cfg, true, false);
+
+		pwm_init(7, &pwm_cfg, false);
+		pwm_set_counter(7, 24000);
+		pwm_set_both_levels(7, 24000, 24000); // 50% duty
+		pwm_set_enabled(7, true);
+
+		sleep_ms(200); // wait for a few cycles of vcom
+
+		puts("display on");
+
+		// send another black screen for good measure
+		//scanout_frame();
+		//while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
 	}
 
-	ls012b7dd06 module;
+	void power_off() {
+		if (!is_finished_scanning()) {
+			while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish if one was in progress
+			sleep_us(120);
+		}
+
+		// Send blank frame
+		memset(fb_data, 0x00, sizeof fb_data);  // clear framebuffer
+		scanout_frame(); 
+
+		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
+		sleep_us(120);
+
+		// Stop PWM
+		pwm_set_both_levels(7, 0, 0);
+
+		// Wait for wrap
+		pwm_set_irq_enabled(7, true);
+		pwm_clear_irq(7);
+		while (!(pwm_get_irq_status_mask() & (1 << 7))) tight_loop_contents();
+		
+		pwm_set_enabled(7, false);
+
+		// wait a bit for io to settle
+		sleep_ms(1);
+
+		// Turnoff all io
+		for (int i = 2; i < 15; ++i)
+			gpio_set_function(i, GPIO_FUNC_NULL);
+	
+		sleep_us(60); // datasheet says at least 30usec
+
+		// Turn off power supplies
+		pwr::set_5v_enable(false);
+		sleep_ms(2);
+		pwr::set_3v2_enable(false);
+
+		puts("disp off");
+	}
+
+	bool is_finished_scanning() {
+		return pio_interrupt_get(pio0, 2);
+	}
+	
+	void scanout_frame() {
+		// trigger dma
+		dma_channel_set_read_addr(reconfig_dma, &fb_dma_tx_list.list[0], true);
+		// resync clocks
+		pio_clkdiv_restart_sm_mask(pio0, 0b111);
+		// start by ack-ing interrupt
+		pio_interrupt_clear(pio0, 2);
+	}
 }

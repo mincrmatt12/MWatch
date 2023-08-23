@@ -4,3 +4,12 @@
 [submodule "vendor/pico-sdk"]
 	path = vendor/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk
+[submodule "vendor/nrfx"]
+	path = vendor/nrfx
+	url = https://github.com/NordicSemiconductor/nrfx
+[submodule "vendor/CMSIS_5"]
+	path = vendor/CMSIS_5
+	url = https://github.com/ARM-software/CMSIS_5
+[submodule "vendor/picolibc"]
+	path = vendor/picolibc
+	url = https://github.com/picolibc/picolibc/
