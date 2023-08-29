@@ -161,14 +161,13 @@ namespace mwk::exc {
 		utl::result<void, ecf::system_error> detach_task(ecf::basic_task<T> &&task) {
 			auto root_coro_frame = new (std::nothrow) root_coro_entry{};
 			if (root_coro_frame == nullptr) return ecf::system_error::out_of_memory;
-			auto h = std::move(task).extract_coroutine_handle(
-				std::coroutine_handle<>::from_address(static_cast<void *>(root_coro_frame))
-			);
-			if (h.is_error()) {
+			auto h = std::move(task).extract_coroutine_handle(std::coroutine_handle<>::from_address(static_cast<void *>(root_coro_frame)));
+			if (h.done()) {
+				h.destroy();
 				delete root_coro_frame;
-				return h.template as_error_code<ecf::system_error>();
+				return ecf::system_error::already_awaited;
 			}
-			root_coro_frame->extracted = h.get();
+			root_coro_frame->extracted = h;
 			waiting_root_tasks.push_front(root_coro_frame);
 			return {};
 		}
@@ -196,9 +195,12 @@ namespace mwk::exc {
 
 		// List of suspended awaiters ready to resume
 		detail::coro_list ready;
+		// Volatile counter of tasks made ready, to ensure all ready tasks are properly counted.
+		volatile int tasks_made_ready = 0;
 		// Set of all root task entries -- these may be also in the ready/blocked lists
 		utl::intrusive_list<root_coro_entry, &root_coro_entry::list_item> root_tasks;
 		// Set of all root task entries which have not been started yet (once they are, they get moved to root_tasks)
 		utl::intrusive_list<root_coro_entry, &root_coro_entry::list_item> waiting_root_tasks;
+
 	};
 }

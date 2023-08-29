@@ -4,7 +4,7 @@ namespace mwk::exc {
 	thread_local task_manager * volatile task_manager::active_task_manager = nullptr;
 
 	bool task_manager::ready_to_resume() const {
-		return !ready.empty() || !waiting_root_tasks.empty();
+		return tasks_made_ready || !ready.empty() || !waiting_root_tasks.empty();
 	}
 
 	std::coroutine_handle<> task_manager::pop_next() { // TODO: critical
@@ -13,7 +13,8 @@ namespace mwk::exc {
 			auto * root_record = root_tasks.push_front(waiting_root_tasks.pop_front());
 			return root_record->extracted;
 		}
-		else if (ready) {
+		else if (ready || tasks_made_ready) {
+			tasks_made_ready = tasks_made_ready - 1;
 			auto * tcb_to_start = ready.delete_at(ready.first());
 			auto handle = tcb_to_start->target;
 			tcb_to_start->target = {};
@@ -41,6 +42,7 @@ namespace mwk::exc {
 		resumer->blocking.delete_at(this);
 		resumer = nullptr;
 		parent->ready.push_back(this);
+		parent->tasks_made_ready = parent->tasks_made_ready + 1;
 	}
 
 	void detail::resume_token::abandon() && {

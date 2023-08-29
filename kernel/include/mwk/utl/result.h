@@ -7,6 +7,11 @@ namespace mwk::utl {
 	struct as_error {};
 
 	namespace detail {
+		// Invariants demanded of result storage types:
+		//
+		//  - copy/move construction from an error-holding result should treat the constructed-from object as const, _even if move-constructing_.
+		//  - should be constexpr constructible
+
 		template<typename T>
 		struct basic_result_storage {
 			inline bool is_error() const {return !object.has_value();}
@@ -28,8 +33,8 @@ namespace mwk::utl {
 			template<
 				std::convertible_to<T> Value
 			>
-			basic_result_storage(Value&& v) : error(0), object(std::forward<Value>(v)) {}
-			basic_result_storage(encoded_error_t error, as_error) : error(error) {}
+			constexpr basic_result_storage(Value&& v) : error(0), object(std::forward<Value>(v)) {}
+			constexpr basic_result_storage(encoded_error_t error, as_error) : error(error) {}
 		private:
 			encoded_error_t error;
 			std::optional<T> object;
@@ -39,10 +44,10 @@ namespace mwk::utl {
 			inline bool is_error() const {return error != 0;}
 			inline encoded_error_t get_error() const {return error - 1;}
 
-			void get() const {}
+			constexpr void get() const {}
 
-			void_result_storage() : error{} {}
-			void_result_storage(encoded_error_t error, as_error) : error(error + 1) {}
+			constexpr void_result_storage() : error{} {}
+			constexpr void_result_storage(encoded_error_t error, as_error) : error(error + 1) {}
 		private:
 			encoded_error_t error;
 		};
@@ -56,8 +61,8 @@ namespace mwk::utl {
 			inline encoded_error_t get_error() const {return address >> 1;}
 			inline T* get() const {return reinterpret_cast<T *>(address);}
 
-			aligned_pointer_result_storage(T* v) : address(reinterpret_cast<uintptr_t>(v)) {};
-			aligned_pointer_result_storage(encoded_error_t error, as_error) : address((error << 1) | 1) {};
+			constexpr aligned_pointer_result_storage(T* v) : address(reinterpret_cast<uintptr_t>(v)) {};
+			constexpr aligned_pointer_result_storage(encoded_error_t error, as_error) : address((error << 1) | 1) {};
 		private:
 			uintptr_t address;
 		};
@@ -68,8 +73,8 @@ namespace mwk::utl {
 			using aligned_pointer_result_storage<T>::get_error;
 			inline T get() const {return *std::forward<T>(aligned_pointer_result_storage<T>::get());}
 
-			aligned_reference_result_storage(T v) : aligned_pointer_result_storage<T>(std::addressof(v)) {}
-			aligned_reference_result_storage(encoded_error_t error, as_error) : aligned_pointer_result_storage<T>(error, as_error{}) {}
+			constexpr aligned_reference_result_storage(T v) : aligned_pointer_result_storage<T>(std::addressof(v)) {}
+			constexpr aligned_reference_result_storage(encoded_error_t error, as_error) : aligned_pointer_result_storage<T>(error, as_error{}) {}
 		};
 
 		template<typename T> requires (alignof(T) < 2)
@@ -212,12 +217,12 @@ namespace mwk::utl {
 			!std::is_constructible_v<storage_type, E> &&
 			decoder_type::template present<E>()
 		)
-		basic_result(E code) : storage_type(decoder_type::build(code), as_error{}) {}
+		constexpr basic_result(E code) : storage_type(decoder_type::build(code), as_error{}) {}
 
 		template<error_category E> requires (
 			decoder_type::template present<E>()
 		)
-		basic_result(E code, as_error) : storage_type(decoder_type::build(code), as_error{}) {}
+		constexpr basic_result(E code, as_error) : storage_type(decoder_type::build(code), as_error{}) {}
 
 		// Error access
 		using storage_type::is_error;

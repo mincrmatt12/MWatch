@@ -25,11 +25,6 @@ namespace mwk::utl {
 		bool in_list() const {
 			return p_prev;
 		}
-
-		const T& operator*() const {return *p_next;}
-		T& operator*() {return *p_next;}
-		const T* operator->() const {return p_next;}
-		T* operator->() {return p_next;}
 	private:
 		intrusive_list_item(intrusive_list_item *p_prev, T* p_next) : 
 			p_prev(p_prev),

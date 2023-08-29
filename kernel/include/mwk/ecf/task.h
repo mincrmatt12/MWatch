@@ -1,6 +1,7 @@
 #pragma once
 
 #include <coroutine>
+#include <bit>
 #include "../utl/err.h"
 #include "../utl/result.h"
 #include "./sys_error.h"
@@ -28,11 +29,8 @@ namespace mwk::ecf {
 	using task = typename detail::task_type_expander<Return, UserErrors...>::type;
 
 	namespace detail {
-		// The specialization-independent parts of the task promise.
-		class common_task_promise_base {
-			std::coroutine_handle<> continuation; // Caller (forms continuation stack)
-			std::coroutine_handle<> (*exception_reraise_thunk)(utl::encoded_error_t upcast_from, std::coroutine_handle<> into){};
-
+		template<is_task_result Holder>
+		class common_task_promise {
 			struct start_previous {
 				bool await_ready() noexcept { return false; } // calls by returning a new coroutine handle
 				void await_resume() noexcept { }              // resumes by changing active coroutine
@@ -46,24 +44,8 @@ namespace mwk::ecf {
 						return promise.continuation;
 				}
 			};
+
 		public:
-			// Set the continuation of this coroutine to `caller`.
-			void continue_in(std::coroutine_handle<> caller) {
-				continuation = caller;
-			}
-
-			// Continue in the given coroutine, sending exceptions upwards
-			void continue_but_rethrow(std::coroutine_handle<> caller, std::coroutine_handle<> (*reraise_thunk)(utl::encoded_error_t, std::coroutine_handle<>)) {
-				continuation = caller;
-				exception_reraise_thunk = reraise_thunk;
-			}
-
-			std::suspend_always initial_suspend() noexcept { return {}; }
-			start_previous      final_suspend()   noexcept { return {}; }
-		};
-
-		template<is_task_result Holder>
-		struct common_task_promise : common_task_promise_base {
 			static basic_task<Holder> get_return_object_on_allocation_failure();
 
 			Holder& result() & {
@@ -96,8 +78,24 @@ namespace mwk::ecf {
 					return throwable_traits<await_t>::template bind_awaiter<common_task_promise>(std::forward<Awaitable>(awaitable));
 				}
 			}
+
+			// Set the continuation of this coroutine to `caller`.
+			void continue_in(std::coroutine_handle<> caller) {
+				continuation = caller;
+			}
+
+			// Continue in the given coroutine, sending exceptions upwards
+			void continue_but_rethrow(std::coroutine_handle<> caller, std::coroutine_handle<> (*reraise_thunk)(utl::encoded_error_t, std::coroutine_handle<>)) {
+				continuation = caller;
+				exception_reraise_thunk = reraise_thunk;
+			}
+
+			static std::suspend_always initial_suspend() noexcept { return {}; }
+			static start_previous      final_suspend()   noexcept { return {}; }
 		protected:
 			Holder result_holder {system_error::not_completed, utl::as_error{}};
+			std::coroutine_handle<> continuation; // Caller (forms continuation stack)
+			std::coroutine_handle<> (*exception_reraise_thunk)(utl::encoded_error_t upcast_from, std::coroutine_handle<> into){};
 		};
 
 		template<is_task_result Holder, typename Inner=typename Holder::success_type>
@@ -127,6 +125,29 @@ namespace mwk::ecf {
 		};
 
 		struct from_allocation_failure {};
+		inline void dummy_destroy() {};
+
+		template<is_task_result PromiseLike, system_error AsError>
+		struct always_complete_error_coroutine_frame {
+			// Set resume pointer to null -- results in the coroutine as acting as already finished.
+			void (*resume)() = nullptr;
+			// Ensure h.destroy() does not break things
+			void (*destroy)() = dummy_destroy;
+			// Now the coroutine "promise" object. This will be recast and interpreted as a task_promise<PromiseLike> object, which 
+			// (due to standard-layout rules) will be laid out as a common_task_promise. The result holder is intentionally placed first
+			PromiseLike fake_promise__result_holder {AsError, utl::as_error{}};
+			// The continuation/reraise thunks are intentionally not included here as there should be no way to access them from an opaque
+			// coroutine handle (nothing should be continue_in-ing a done() coroutine)
+		};
+
+		inline bool is_fake_frame(std::coroutine_handle<> handle) {
+			struct exposition_coroutine_frame {
+				void (*resume)();
+				void (*destroy)();
+			};
+
+			return static_cast<exposition_coroutine_frame *>(handle.address())->destroy == dummy_destroy;
+		}
 	}
 
 	template<is_task_result Holder>
@@ -155,12 +176,43 @@ namespace mwk::ecf {
 		friend detail::common_task_promise<Result>;
 		friend throwable_traits<basic_task>;
 
+		operator bool() const {
+			return !detail::is_fake_frame(handle);
+		}
+
+		bool is_ready() const {
+			return handle.done();
+		}
+
+		void start_sync() {
+			if (!is_ready()) {
+				handle.promise().continue_in(std::noop_coroutine());
+				handle.resume();
+			}
+		}
+
+		// Resume the coroutine synchronously -- you almost _never_ want to do this yourself.
+		void resume_sync() {
+			if (!is_ready()) handle.resume();
+		}
+	private:
+		template<system_error Error>
+		static inline std::coroutine_handle<promise_type> produce_erroring_frame() {
+			constinit const static detail::always_complete_error_coroutine_frame<Result, Error> instance{};
+			return std::coroutine_handle<promise_type>::from_address((void *)&instance);
+		}
+	public:
+		std::coroutine_handle<> extract_coroutine_handle(std::coroutine_handle<> continuation) && {
+			if (!detail::is_fake_frame(handle)) handle.promise().continue_in(continuation);
+			return std::exchange(handle, produce_erroring_frame<system_error::already_awaited>());
+		}
+
 		basic_task() = default;
 		~basic_task() {
-			if (auto h = coro_handle()) h.destroy();
+			handle.destroy();
 		}
 		basic_task(const basic_task&) = delete;
-		basic_task(basic_task&& t) : coroutine_address(std::exchange(t.coroutine_address, {system_error::already_awaited})) {}
+		basic_task(basic_task&& t) : handle(std::exchange(t.handle, produce_erroring_frame<system_error::already_awaited>())) {}
 		basic_task& operator=(const basic_task&) = delete;
 		basic_task& operator=(basic_task&& o) {
 			if (std::addressof(o) == this) return *this;
@@ -168,68 +220,11 @@ namespace mwk::ecf {
 			new (this) basic_task(std::move(o));
 			return *this;
 		}
-
-		explicit operator bool() const {
-			return !coroutine_address.is_error();
-		}
-
-		bool has_task_handle_error() const {
-			return !coroutine_address.is_error();
-		}
-
-		system_error task_handle_error() const {
-			return coroutine_address.as_error_code<system_error>();
-		}
-
-		bool is_ready() const {
-			if (auto h = coro_handle()) return h.done();
-			return false;
-		}
-
-		void start_sync() {
-			if (!is_ready()) {
-				coro_handle().promise().continue_in(std::noop_coroutine());
-				coro_handle().resume();
-			}
-		}
-
-		// Resume the coroutine synchronously -- you almost _never_ want to do this yourself.
-		void resume_sync() {
-			if (!is_ready()) coro_handle().resume();
-		}
-
-		utl::result<std::coroutine_handle<>, system_error> extract_coroutine_handle(std::coroutine_handle<> continuation) && {
-			if (coroutine_address.is_error()) return {coroutine_address.as_error_code<system_error>()};
-			else {
-				coro_handle().promise().continue_in(continuation);
-				return std::exchange(coroutine_address, {system_error::already_awaited}).transform<std::coroutine_handle<>>(std::coroutine_handle<>::from_address);
-			}
-		}
 	private:
-		using wrapped_coro_t = utl::basic_result<utl::result_traits::aligned_ptr<void>, system_error>;
-
-		// Holds the to-be-awaited coroutine without setting up the return value.
-		struct common_wrapped_task_awaiter {
-			common_wrapped_task_awaiter(wrapped_coro_t t) : coro(t) {}
-
-			bool await_ready() const noexcept {
-				if (!coro) return true;
-				auto coro_promise = std::coroutine_handle<promise_type>::from_address(coro.get());
-				return coro_promise.done();
-			}
-			std::coroutine_handle<> await_suspend(std::coroutine_handle<> caller) noexcept {
-				auto coro_promise = std::coroutine_handle<promise_type>::from_address(coro.get());
-				coro_promise.promise().continue_in(caller);
-				return coro_promise;
-			}
-		protected:
-			wrapped_coro_t coro;
-		};
-
 		// Holds the to-be-awaited coroutine assuming no handle_error is present
 		template<bool Move>
-		struct common_raw_task_awaiter {
-			common_raw_task_awaiter(std::coroutine_handle<promise_type> t) : coro(t) {}
+		struct task_result_awaiter {
+			task_result_awaiter(std::coroutine_handle<promise_type> t) : coro(t) {}
 			
 			bool await_ready() const noexcept {
 				return coro.done();
@@ -251,67 +246,18 @@ namespace mwk::ecf {
 			std::coroutine_handle<promise_type> coro;
 		};
 
-		const std::coroutine_handle<promise_type> coro_handle() const {
-			if (coroutine_address) return std::coroutine_handle<promise_type>::from_address(coroutine_address.get());
-			else return {};
-		}
-
-		std::coroutine_handle<promise_type> coro_handle() {
-			return const_cast<std::coroutine_handle<promise_type>&&>(std::as_const(*this).coro_handle());
-		}
-
-		template<typename WrappedCoro> requires (std::is_same_v<std::decay_t<WrappedCoro>, wrapped_coro_t>)
-		static Result recover_true_result(WrappedCoro&& wc) {
-			if (wc) return std::coroutine_handle<promise_type>::from_address(std::forward<WrappedCoro>(wc).get()).promise().result();
-			else return {std::forward<WrappedCoro>(wc).template as_error_code<system_error>(), utl::as_error{}};
-		}
-
-		wrapped_coro_t coroutine_address {
-			system_error::already_awaited
-		};
-
+		std::coroutine_handle<promise_type> handle;
 	public:
-		// Wait for the raw result, including potential allocation failures. Note that using this directly will _always_ do at least
-		// one copy of the result object, as it might have to initialize a new result object pulled from the allocation failure result.
-		//
-		// If you're directly co_awaiting with the rethrow mechanism, you can ignore this. If you want to get the result<> object but
-		// ignore system_errors coming from allocation failures, you can use result() -- that formulation will 'correctly' directly propagate
-		// references to the promise's result object.
-		auto raw_result() const & noexcept {
-			// lvalue version, keeps copy around
-			struct copy_awaiter : common_wrapped_task_awaiter {
-				using common_wrapped_task_awaiter::common_wrapped_task_awaiter;
-
-				auto await_resume() {
-					return recover_true_result(this->coro);
-				}
-			};
-
-			return copy_awaiter{coroutine_address};
-		}
-
-		auto raw_result() const && noexcept {
-			// rvalue version, returns via move
-			struct move_awaiter : common_wrapped_task_awaiter {
-				using common_wrapped_task_awaiter::common_wrapped_task_awaiter;
-
-				auto await_resume() {
-					return recover_true_result(std::move(this->coro));
-				}
-			};
-
-			return move_awaiter{coroutine_address};
-		}
-
 		auto result() const & noexcept {
-			return awaitable_result(coroutine_address.transform<common_raw_task_awaiter<false>>(std::coroutine_handle<promise_type>::from_address));
+			return task_result_awaiter<false>({this->handle});
 		}
 		auto result() && noexcept {
-			return awaitable_result(coroutine_address.transform<common_raw_task_awaiter<true>>(std::coroutine_handle<promise_type>::from_address));
+			return task_result_awaiter<true>({this->handle});
 		}
+
 	private:
-		basic_task(promise_type& promise) : coroutine_address(std::coroutine_handle<promise_type>::from_promise(promise).address()) {}
-		basic_task(detail::from_allocation_failure) : coroutine_address(system_error::out_of_memory) {}
+		basic_task(promise_type& promise) : handle(std::coroutine_handle<promise_type>::from_promise(promise)) {}
+		basic_task(detail::from_allocation_failure) : handle(produce_erroring_frame<system_error::out_of_memory>()) {}
 	};
 
 	// Allow awaiting a basic_task directly for its result's underlying object, rethrowing errors.
@@ -336,37 +282,30 @@ namespace mwk::ecf {
 			using bridge_t = throwable_tasklike_bridge<std::decay_t<SuspendedTasklike>>;
 
 			struct hybrid_awaiter : std::suspend_always {
-				typename task_t::wrapped_coro_t coro;
+				std::coroutine_handle<typename basic_task<Result>::promise_type> coro;
 
 				bool await_ready() const noexcept {
-					if (!coro) return false;
-					auto coro_promise = std::coroutine_handle<typename task_t::promise_type>::from_address(coro.get());
-					return coro_promise.done();
+					return coro.done() && !detail::is_fake_frame(coro);
 				}
 				std::coroutine_handle<> await_suspend(std::coroutine_handle<> caller) noexcept {
-					// If there's already an error inside coro (allocation fail), just directly return it
-					if (!coro) {
-						return bridge_t::throw_in(caller, coro.template as_error_code<system_error>());
+					if (detail::is_fake_frame(coro)) {
+						return bridge_t::throw_in(caller, coro.promise().result().template as_error_code<system_error>());
 					}
-					else {
-						auto coro_promise = std::coroutine_handle<typename task_t::promise_type>::from_address(coro.get());
-						coro_promise.promise().continue_but_rethrow(caller, &throwable_traits::throw_in_thunk<SuspendedTasklike>);
-						return coro_promise;
-					}
+					coro.promise().continue_but_rethrow(caller, &throwable_traits::throw_in_thunk<SuspendedTasklike>);
+					return coro;
 				}
 				decltype(auto) await_resume() {
 					// if we call resume, we didn't rethrow
-					auto coro_promise = std::coroutine_handle<typename task_t::promise_type>::from_address(coro.get());
 					if constexpr (std::is_rvalue_reference_v<Task>) {
-						return std::move(coro_promise.promise()).result().get();
+						return std::move(coro.promise()).result().get();
 					}
 					else {
-						return coro_promise.promise().result().get();
+						return coro.promise().result().get();
 					}
 				}
 			};
 
-			return hybrid_awaiter{.coro = result.coroutine_address};
+			return hybrid_awaiter{.coro = result.handle};
 		}
 	};
 
