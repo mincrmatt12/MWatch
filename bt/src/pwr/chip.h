@@ -235,8 +235,10 @@ namespace bt::pwr {
 	mwk::task<uint32_t, pwr_error> read_interrupts();
 
 	// Run an APCMD
-	mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, int argc=7);
 	mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, uint8_t *resp, int argc=7, int resc=6);
+	inline mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, int argc=7) {
+		return run_apcmd(opcode, args, nullptr, argc, 0);
+	}
 
 	// AP command wrappers:
 	struct BuckCfg {
@@ -297,6 +299,39 @@ namespace bt::pwr {
 			payload[1] = vset;
 			payload[2] = (iset & 0b1111) | ((izc_set & 0b11) << 4);
 			payload[3] = enabled ? 0b01 : 0b00;
+		}
+	};
+
+	struct BuckBoostCfg {
+		enum flag : uint8_t {
+			Ind = (1 << 2),     // If 1, inductor attached is 3.3uH, else 4.7uH
+			Md  = (1 << 3),     // If 1, disable EMI reduction damping
+			PsvDsc = (1 << 4),  // Regulator passively discharged on disable if set to 1, otherwise only hard reset.
+			ActDsc = (1 << 5),  // Regulator actively discharged on disable if set to 1, otherwise only hard reset.
+			RipRed = (1 << 5),  // Ripple-reduction enable -- per datasheet we always set this (regardless of value of flags field).
+		};
+
+		uint8_t flags = flag::RipRed;
+		uint8_t vset  = 0; // V = vset * 0.1 + 2.5, with limit of 5V
+		uint8_t iset =  0; // I = iset * 0.050 (0 means "minimum on-time")
+
+		bool enabled = false;
+
+		constexpr bool set_voltage_current(int millivolts, int milliamps) {
+			if (millivolts < 2500 || millivolts > 5000) return false;
+			if (millivolts % 100) return false;
+			if (milliamps > 350) return false;
+			if (milliamps % 50) return false;
+			iset = milliamps / 50;
+			vset = (millivolts - 2500) / 100;
+			return true;
+		}
+
+		void write_to(uint8_t payload[4]) {
+			payload[0] = 0x00;
+			payload[1] = iset;
+			payload[2] = vset;
+			payload[3] = flags | (enabled ? 0b01 : 0b00) | flag::RipRed;
 		}
 	};
 

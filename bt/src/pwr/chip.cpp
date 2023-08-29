@@ -37,8 +37,10 @@ namespace bt::pwr {
 
 	mwk::task<uint8_t, pwr_error> read_register(uint8_t reg) {
 		uint8_t out;
-		nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TXRX(0x28, &reg, 1, &out, 1);
-		if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_return mwk::raise(translate_nrfx_error(ec));
+		{
+			nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TXRX(0x28, &reg, 1, &out, 1);
+			if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_return mwk::raise(translate_nrfx_error(ec));
+		}
 		if (auto ec = (co_await sync_obj.wait()).type; ec != NRFX_TWIM_EVT_DONE) {
 			co_return mwk::raise(translate_nrfx_error(ec));
 		}
@@ -50,8 +52,10 @@ namespace bt::pwr {
 			regno,
 			value
 		};
-		nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TX(0x28, buf, 2);
-		if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_await mwk::raise(translate_nrfx_error(ec));
+		{
+			nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TX(0x28, buf, 2);
+			if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_await mwk::raise(translate_nrfx_error(ec));
+		}
 		if (auto ec = (co_await sync_obj.wait()).type; ec != NRFX_TWIM_EVT_DONE) {
 			co_await mwk::raise(translate_nrfx_error(ec));
 		}
@@ -63,23 +67,23 @@ namespace bt::pwr {
 		};
 		if (n > 31) co_await mwk::raise(pwr_error::too_large);
 		memcpy(buf + 1, out, n);
-		nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TX(0x28, buf, size_t(n+1));
-		if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_await mwk::raise(translate_nrfx_error(ec));
+		{
+			nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TX(0x28, buf, size_t(n+1));
+			if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_await mwk::raise(translate_nrfx_error(ec));
+		}
 		if (auto ec = (co_await sync_obj.wait()).type; ec != NRFX_TWIM_EVT_DONE) {
 			co_await mwk::raise(translate_nrfx_error(ec));
 		}
 	}
 
 	mwk::task<void, pwr_error> read_register(uint8_t regno, uint8_t out[], int n) {
-		nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TXRX(0x28, &regno, 1, out, size_t(n));
-		if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_await mwk::raise(translate_nrfx_error(ec));
+		{
+			nrfx_twim_xfer_desc_t xfer = NRFX_TWIM_XFER_DESC_TXRX(0x28, &regno, 1, out, size_t(n));
+			if (auto ec = nrfx_twim_xfer(&twi, &xfer, 0); ec != NRFX_SUCCESS) co_await mwk::raise(translate_nrfx_error(ec));
+		}
 		if (auto ec = (co_await sync_obj.wait()).type; ec != NRFX_TWIM_EVT_DONE) {
 			co_await mwk::raise(translate_nrfx_error(ec));
 		}
-	}
-
-	mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, int argc) {
-		return run_apcmd(opcode, args, nullptr, argc, 0);
 	}
 
 	mwk::task<void, pwr_error> run_apcmd(uint8_t opcode, const uint8_t *args, uint8_t *resp, int argc, int resc) {
