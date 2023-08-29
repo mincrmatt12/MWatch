@@ -1,5 +1,5 @@
 # LLVM arm-none-eabi toolchain: path must be set as MWATCH_TOOLCHAIN_DIR, otherwise assumes /opt/llvm-arm/17/bin
-set(MWATCH_TOOLCHAIN_DIR /opt/llvm-arm/17/bin CACHE PATH "Path to the LLVM arm toolchain bin directory.")
+set(MWATCH_TOOLCHAIN_DIR /opt/llvm-arm/18/bin CACHE PATH "Path to the LLVM arm toolchain bin directory.")
 
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
