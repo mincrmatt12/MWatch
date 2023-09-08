@@ -22,6 +22,7 @@ NOTICE: This file has also been modified for the MWatch.
 
     .syntax unified
     .arch armv7e-m
+	.cpu cortex-m4
 
     .section .isr_vector, "ax"
     .align 2

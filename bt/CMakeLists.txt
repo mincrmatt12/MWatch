@@ -56,6 +56,9 @@ target_compile_options(mdk_sys PUBLIC
 	$<$<COMPILE_LANGUAGE:CXX>: -fno-threadsafe-statics -Wno-register>
 )
 
+target_compile_options(mwbt PUBLIC -Rpass-missed=coro-elide -Rpass=coro-elide)
+target_link_options(mwbt PUBLIC    -Rpass-missed=coro-elide -Rpass=coro-elide)
+
 add_library(mwbt_linkscript INTERFACE)
 target_link_options(mwbt_linkscript INTERFACE
 	LINKER:--script LINKER:${CMAKE_CURRENT_LIST_DIR}/ld/kernel.ld

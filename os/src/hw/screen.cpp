@@ -1,8 +1,7 @@
 #include "./screen.h"
 #include "hardware/pio_instructions.h"
-#include "pico/time.h"
 #include "pwr.h"
-#include <cstdio>
+#include <stdio.h>
 #include <string.h>
 
 #include <pico.h>
@@ -11,7 +10,7 @@
 #include <hardware/gpio.h>
 #include <hardware/pwm.h>
 
-#include <screen.pio.h>
+#include <mwos_pios/screen.h>
 
 namespace mwos::screen {
 	// FRAMEBUFFER LAYOUT:
@@ -65,9 +64,7 @@ namespace mwos::screen {
 		// STEP 1: TURN ON POWER SUPPLIES
 
 		pwr::set_3v2_enable(true);
-		sleep_ms(2); // >= 1 msec in datasheet
 		pwr::set_5v_enable(true);
-		sleep_ms(2); // >= 2 GCK cycles in datasheet 
 
 		// STEP 1a: INIT PERIPHERALS
 
@@ -190,7 +187,7 @@ namespace mwos::screen {
 
 		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
 
-		sleep_us(120); // datasheet says >= 30us
+		//sleep_us(120); // datasheet says >= 30us
 
 		// STEP 3: Start VCOM/VA/VB driver
 		//
@@ -215,7 +212,7 @@ namespace mwos::screen {
 		pwm_set_both_levels(7, 24000, 24000); // 50% duty
 		pwm_set_enabled(7, true);
 
-		sleep_ms(200); // wait for a few cycles of vcom
+		//sleep_ms(200); // wait for a few cycles of vcom
 
 		puts("display on");
 
@@ -227,7 +224,7 @@ namespace mwos::screen {
 	void power_off() {
 		if (!is_finished_scanning()) {
 			while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish if one was in progress
-			sleep_us(120);
+			//sleep_us(120);
 		}
 
 		// Send blank frame
@@ -235,7 +232,7 @@ namespace mwos::screen {
 		scanout_frame(); 
 
 		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
-		sleep_us(120);
+		//sleep_us(120);
 
 		// Stop PWM
 		pwm_set_both_levels(7, 0, 0);
@@ -248,17 +245,17 @@ namespace mwos::screen {
 		pwm_set_enabled(7, false);
 
 		// wait a bit for io to settle
-		sleep_ms(1);
+		//sleep_ms(1);
 
 		// Turnoff all io
 		for (int i = 2; i < 15; ++i)
 			gpio_set_function(i, GPIO_FUNC_NULL);
 	
-		sleep_us(60); // datasheet says at least 30usec
+		//sleep_us(60); // datasheet says at least 30usec
 
 		// Turn off power supplies
 		pwr::set_5v_enable(false);
-		sleep_ms(2);
+		//sleep_ms(2);
 		pwr::set_3v2_enable(false);
 
 		puts("disp off");
