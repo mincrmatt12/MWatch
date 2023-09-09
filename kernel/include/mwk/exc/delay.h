@@ -4,7 +4,7 @@
 
 namespace mwk::exc {
 	// TODO: big global config struct
-	using tick_type_t = uint32_t;
+	using tick_type_t = uint64_t;
 
 	// FreeRTOS-style task-delay list (blocked list is sorted on resume tick)
 	class delay_resume_source {

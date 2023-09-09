@@ -73,5 +73,9 @@ namespace mwk::exc {
 				};
 			}
 		}
+
+		auto operator co_await() {
+			return wait();
+		}
 	};
 }

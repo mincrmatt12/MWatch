@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include "err.h"
 
 namespace mwk::utl {
