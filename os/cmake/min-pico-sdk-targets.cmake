@@ -44,6 +44,7 @@ target_include_directories(picosdk PUBLIC
     ${picosdk_rp2_common_dir}/hardware_resets/include
     ${picosdk_rp2_common_dir}/pico_bootrom/include
     ${picosdk_rp2040_dir}/hardware_structs/include
+	${picosdk_rp2_common_dir}/cmsis/stub/CMSIS/Device/RaspberryPi/RP2040/Include
 	# Hardware drivers
     ${picosdk_rp2_common_dir}/hardware_gpio/include
     ${picosdk_rp2_common_dir}/hardware_uart/include

@@ -1,11 +1,14 @@
-#include <string.h>
 #include <stdio.h>
 #include <pico/platform.h>
 #include "hw/screen.h"
+#include "kcore/delay.h"
 
-int main() {
-	// setup clocks
+#include <mwk/exc/task_manager.h>
 
+// Global task manager
+mwk::exc::task_manager global_tm;
+
+mwk::task<void> main_task() {
 	puts("hi!");
 	puts("hi!");
 	puts("hi!");
@@ -15,7 +18,7 @@ int main() {
 	using namespace mwos::screen;
 	
 	// turn on the screen (dbg)
-	power_up();
+	co_await power_up();
 
 	// write "HI" and a line
 	
@@ -39,22 +42,25 @@ int main() {
 		set_pixel(80+color, 130, color);
 	}
 
+	puts("ready");
+
 	// the multicolored line
 	
 	while (true) {
-		scanout_frame();
-		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish if one was in progress
+		co_await scanout_and_wait_frame();
+		puts("frame");
+		co_await mwos::delay.by(16);
 	}
-	//scanout_frame();
-	//while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish if one was in progress
+}
 
-	// brag about it
-	puts("hi there ls012b7dd06...?");
+int main() {
+	// call prepare_hw
+	global_tm.detach_task(main_task()); // todo: check result
 
-	// wait for poweroff command
-	while (getchar() != 'D') tight_loop_contents();
-
-	power_off();
-
-	while (1) {}
+	// SCHEDULER LOOP
+	while (1) {
+		if (global_tm.ready_to_resume()) global_tm.pop_next().resume();
+		// ticks, etc.
+		mwos::delay.process();
+	}
 }

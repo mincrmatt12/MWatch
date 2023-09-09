@@ -8,15 +8,15 @@ target_include_directories(boot_rom_stage2_raw PUBLIC
 )
 target_link_libraries(boot_rom_stage2_raw picosdk_base)
 target_link_options(boot_rom_stage2_raw PRIVATE
-	"LINKER:--script=${picosdk_boot2_dir}/boot_stage2.ld"
+	"LINKER:--script=${CMAKE_CURRENT_LIST_DIR}/../ld/boot2.ld"
 )
 
 # Generate binary & sources
 add_custom_command(TARGET boot_rom_stage2_raw
 	POST_BUILD
 	COMMAND ${CMAKE_OBJCOPY} -Obinary $<TARGET_FILE:boot_rom_stage2_raw> ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_raw.bin
-	COMMAND ${Python_EXECUTABLE} ${picosdk_boot2_dir}/pad_checksum -s 0xffffffff ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_raw.bin ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_pad.s
-	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_raw.bin ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_pad.s
+	COMMAND ${Python_EXECUTABLE} ${picosdk_boot2_dir}/pad_checksum -s 0xffffffff ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_raw.bin ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_pad.S
+	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_raw.bin ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_pad.S
 )
 
-add_library(boot_rom_stage2 OBJECT ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_pad.s)
+add_library(boot_rom_stage2 OBJECT ${CMAKE_CURRENT_BINARY_DIR}/boot_rom_stage2_pad.S)

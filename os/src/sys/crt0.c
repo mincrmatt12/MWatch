@@ -9,6 +9,7 @@
 #include <hardware/clocks.h>
 #include <hardware/xosc.h>
 #include <hardware/pll.h>
+#include <hardware/watchdog.h>
 
 void setup_clocks() {
     clocks_hw->resus.ctrl = 0;
@@ -68,6 +69,9 @@ void setup_clocks() {
 					CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
 					48 * MHZ,
 					48 * MHZ);
+
+	// Set the watchdog tick (so that the timer is ready)
+	watchdog_start_tick(XOSC_MHZ);
 }
 
 // Addresses from linker script.

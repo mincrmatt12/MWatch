@@ -1,7 +1,6 @@
 #include "./screen.h"
-#include "hardware/pio_instructions.h"
 #include "pwr.h"
-#include <stdio.h>
+#include <cstdio>
 #include <string.h>
 
 #include <pico.h>
@@ -11,6 +10,23 @@
 #include <hardware/pwm.h>
 
 #include <mwos_pios/screen.h>
+#include "../kcore/delay.h"
+
+#include <RP2040.h>
+
+namespace mwos::screen {
+	mwk::exc::async_broadcaster<screen_evt> frame_finished_evt{};
+}
+
+// IRQ handler
+extern "C" void PIO0_IRQ_0_Handler() {
+	if (pio_interrupt_get(pio0, 2)) {
+		// Clear CPU-bound interrupt -- clearing the hardware interrupt is what restarts the actual 
+		// scanout procedure.
+		pio_set_irq0_source_enabled(pio0, pis_interrupt2, false);
+		mwos::screen::frame_finished_evt.post_event({});
+	}
+}
 
 namespace mwos::screen {
 	// FRAMEBUFFER LAYOUT:
@@ -31,40 +47,74 @@ namespace mwos::screen {
 	const static inline uint reconfig_dma = 0;
 	const static inline uint fifo_dma = 1;
 
-	struct fb_tx_list {
+	struct fb_tx_list_rolling_t {
 		struct {
-			uint32_t ctrl; uint32_t write_addr; uint32_t len; const uint16_t * row_ptr;
-		} list[1 + (240 * 4)]{};
-		uint16_t blank[2] {0, 0};
-		constexpr fb_tx_list() {
-			uint32_t ctrl_noswap = 
-				/* chain to fifo dma */ (reconfig_dma << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB) |
-				/* 16 bits */           (DMA_CH0_CTRL_TRIG_DATA_SIZE_VALUE_SIZE_HALFWORD << DMA_CH0_CTRL_TRIG_DATA_SIZE_LSB) |
-				/* read increment */    DMA_CH0_CTRL_TRIG_INCR_READ_BITS |
-				/* dreq pio 2 */        (DREQ_PIO0_TX2 << DMA_CH0_CTRL_TRIG_TREQ_SEL_LSB) |
-				/* high priority */     DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS | DMA_CH0_CTRL_TRIG_EN_BITS;
+			uint32_t ctrl; uint32_t write_addr{PIO0_BASE + PIO_TXF2_OFFSET}; uint32_t len; const uint16_t * row_ptr;
+		} list_buf[2][4];
+		uint16_t blank[2];
+		uint8_t buf_idx = 0;
+		uint8_t row_idx = 0;
 
-			uint32_t ctrl_swap = ctrl_noswap | DMA_CH0_CTRL_TRIG_BSWAP_BITS;
-			uint32_t write_addr = PIO0_BASE + PIO_TXF2_OFFSET; // use address to avoid non-const ptr-to-int cast
+		const static inline uint32_t ctrl_noswap = 
+			/* chain to fifo dma */ (reconfig_dma << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB) |
+			/* 16 bits */           (DMA_CH0_CTRL_TRIG_DATA_SIZE_VALUE_SIZE_HALFWORD << DMA_CH0_CTRL_TRIG_DATA_SIZE_LSB) |
+			/* read increment */    DMA_CH0_CTRL_TRIG_INCR_READ_BITS |
+			/* dreq pio 2 */        (DREQ_PIO0_TX2 << DMA_CH0_CTRL_TRIG_TREQ_SEL_LSB) |
+			/* high priority */     DMA_CH0_CTRL_TRIG_HIGH_PRIORITY_BITS | DMA_CH0_CTRL_TRIG_EN_BITS | 
+		    /* quiet irq */  		DMA_CH0_CTRL_TRIG_IRQ_QUIET_BITS;
 
-			int i = 0;
-			for (int row = 0; row < 240; ++row) {
-				list[i++] = {.ctrl = ctrl_swap   , .write_addr = write_addr , .len = 120 , .row_ptr = &fb_data[120*row]};     // 120 16-bit transfers (for msbs)
-				list[i++] = {.ctrl = ctrl_swap   , .write_addr = write_addr , .len = 2   , .row_ptr = &blank[0]};             // 2 more fake transfers to finish line
-				list[i++] = {.ctrl = ctrl_noswap , .write_addr = write_addr , .len = 120 , .row_ptr = &fb_data[120*row]};     // same 120 transfers, now not swapped to get lsbs
-				list[i++] = {.ctrl = ctrl_noswap , .write_addr = write_addr , .len = 2   , .row_ptr = &blank[0]};             
-			}
-			list[i++] = {.ctrl = ctrl_swap, .len = 0, .row_ptr = nullptr}; // final transfer with null trigger to stop channel
+		const static inline uint32_t ctrl_swap = ctrl_noswap | DMA_CH0_CTRL_TRIG_BSWAP_BITS;
+		const static inline uint32_t ctrl_noswap_irq = 
+	        /* ensure fifo raises irq */              ((ctrl_noswap & ~DMA_CH0_CTRL_TRIG_IRQ_QUIET_BITS) & ~DMA_CH0_CTRL_TRIG_CHAIN_TO_BITS) |
+		    /* prevent fifo from restarting reconf */ fifo_dma << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB;
+
+		void fill() {
+			list_buf[buf_idx][0].row_ptr = &fb_data[row_idx * 240];
+			list_buf[buf_idx][2].row_ptr = &fb_data[row_idx * 240];
+
+			buf_idx = 1 - buf_idx;
+			++row_idx;
 		}
-	};
 
-	constexpr fb_tx_list fb_dma_tx_list{};
+		void reset() {
+			for (int i = 0; i < 2; ++i) {
+				list_buf[i][0] = {.ctrl = ctrl_swap,       .len = 120, .row_ptr = nullptr};
+				list_buf[i][1] = {.ctrl = ctrl_swap,       .len = 2,   .row_ptr = &blank[0]};
+				list_buf[i][2] = {.ctrl = ctrl_noswap,     .len = 120, .row_ptr = nullptr};
+				list_buf[i][3] = {.ctrl = ctrl_noswap_irq, .len = 2,   .row_ptr = &blank[0]};
+			}
 
-	void power_up() {
+			buf_idx = row_idx = 0;
+			fill();
+			fill();
+		}
+
+		void blast() {
+			dma_channel_set_read_addr(reconfig_dma, &list_buf[buf_idx][0], true);
+		}
+
+		int row_being_sent() const {
+			return row_idx - 2;
+		}
+
+		int row_about_to_send() const {
+			return row_idx - 1;
+		}
+	} fb_tx_list;
+
+	void dma_irq0_channel1_handler() {
+		dma_channel_acknowledge_irq0(fifo_dma);
+		if (fb_tx_list.row_about_to_send() < 240) fb_tx_list.blast();
+		if (fb_tx_list.row_idx < 240)             fb_tx_list.fill();
+	}
+
+	mwk::task<void> power_up() {
 		// STEP 1: TURN ON POWER SUPPLIES
 
 		pwr::set_3v2_enable(true);
+		co_await mwos::delay.by(2);
 		pwr::set_5v_enable(true);
+		co_await mwos::delay.by(2);
 
 		// STEP 1a: INIT PERIPHERALS
 
@@ -176,18 +226,25 @@ namespace mwos::screen {
 		channel_config_set_write_increment(&reconfig_dma_config, true);
 		channel_config_set_read_increment(&reconfig_dma_config, true); 
 
-		// prepare for start.
-		dma_channel_configure(reconfig_dma, &reconfig_dma_config, &dma_hw->ch[fifo_dma].al3_ctrl, &fb_dma_tx_list.list[0], 4, false);
+		dma_channel_set_write_addr(reconfig_dma, &dma_hw->ch[fifo_dma].al3_ctrl, false);
+		dma_channel_set_trans_count(reconfig_dma, 4, false);
+		dma_channel_set_config(reconfig_dma, &reconfig_dma_config, false);
+
+		dma_channel_acknowledge_irq0(fifo_dma);
+		dma_channel_set_irq0_enabled(fifo_dma, true);
 
 		// STEP 2: INITIALIZATION
 		// (send all black frame)
 		
 		memset(fb_data, 0x00, sizeof fb_data);  // clear framebuffer
+		
+		// Ensure interrupt is enabled
+		__NVIC_EnableIRQ(PIO0_IRQ_0_IRQn);
+		__NVIC_EnableIRQ(DMA_IRQ_0_IRQn);
 		scanout_frame(); 
 
-		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
-
-		//sleep_us(120); // datasheet says >= 30us
+		co_await frame_finished();
+		co_await mwos::delay.by_us(120); // datasheet says >= 30us
 
 		// STEP 3: Start VCOM/VA/VB driver
 		//
@@ -212,7 +269,7 @@ namespace mwos::screen {
 		pwm_set_both_levels(7, 24000, 24000); // 50% duty
 		pwm_set_enabled(7, true);
 
-		//sleep_ms(200); // wait for a few cycles of vcom
+		co_await mwos::delay.by(200); // wait for a few cycles of vcom
 
 		puts("display on");
 
@@ -221,10 +278,11 @@ namespace mwos::screen {
 		//while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
 	}
 
+	/*
 	void power_off() {
 		if (!is_finished_scanning()) {
 			while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish if one was in progress
-			//sleep_us(120);
+			co_await mwos::delay.by_us(120);
 		}
 
 		// Send blank frame
@@ -232,7 +290,7 @@ namespace mwos::screen {
 		scanout_frame(); 
 
 		while (!is_finished_scanning()) tight_loop_contents(); // wait for frame to finish
-		//sleep_us(120);
+		co_await mwos::delay.by_us(120);
 
 		// Stop PWM
 		pwm_set_both_levels(7, 0, 0);
@@ -245,21 +303,22 @@ namespace mwos::screen {
 		pwm_set_enabled(7, false);
 
 		// wait a bit for io to settle
-		//sleep_ms(1);
+		co_await mwos::delay.by(1);
 
 		// Turnoff all io
 		for (int i = 2; i < 15; ++i)
 			gpio_set_function(i, GPIO_FUNC_NULL);
 	
-		//sleep_us(60); // datasheet says at least 30usec
+		co_await mwos::delay.by_us(60); // datasheet says at least 30usec
 
 		// Turn off power supplies
 		pwr::set_5v_enable(false);
-		//sleep_ms(2);
+		co_await mwos::delay.by(2);
 		pwr::set_3v2_enable(false);
 
 		puts("disp off");
 	}
+	*/
 
 	bool is_finished_scanning() {
 		return pio_interrupt_get(pio0, 2);
@@ -267,10 +326,13 @@ namespace mwos::screen {
 	
 	void scanout_frame() {
 		// trigger dma
-		dma_channel_set_read_addr(reconfig_dma, &fb_dma_tx_list.list[0], true);
+		fb_tx_list.reset();
+		fb_tx_list.blast();
 		// resync clocks
 		pio_clkdiv_restart_sm_mask(pio0, 0b111);
 		// start by ack-ing interrupt
 		pio_interrupt_clear(pio0, 2);
+		// re-enable CPU interrupt
+		pio_set_irq0_source_enabled(pio0, pis_interrupt2, true);
 	}
 }

@@ -5,6 +5,7 @@ set(CMAKE_INTERPROCEDURAL_OPTIMZATION ON)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/cmake/toolchain-clang-rp.cmake)
 set(PICO_SDK_ROOT ${CMAKE_CURRENT_LIST_DIR}/../vendor/pico-sdk)
+set(CMSIS_DIR ${CMAKE_CURRENT_LIST_DIR}/../vendor/CMSIS_5)
 
 project(mwatch-os-main-sys C CXX ASM)
 set(CMAKE_C_STANDARD 11)
@@ -25,13 +26,18 @@ target_sources(mwos PRIVATE ${os_srcs})
 
 add_subdirectory(boot)
 add_subdirectory(pio)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../kernel mwkernel)
 
 target_link_libraries(mwos PRIVATE
 	mwos_pios
+	mwkernel
 	boot_rom_stage2
 	picosdk
 )
 target_link_libraries(mwos PUBLIC c clang_rt.builtins)
+
+target_compile_options(mwos PUBLIC -Rpass-missed=coro-elide -Rpass=coro-elide)
+target_link_options(mwos PUBLIC    -Rpass-missed=coro-elide -Rpass=coro-elide)
 
 target_compile_options(mwos
 	PUBLIC
@@ -46,6 +52,10 @@ target_link_options(mwos_linkscript INTERFACE
 	LINKER:--nmagic
 )
 
+add_library(cm0_cmsis INTERFACE)
+target_include_directories(cm0_cmsis INTERFACE ${CMSIS_DIR}/CMSIS/Core/Include)
+
+target_link_libraries(mwos PRIVATE cm0_cmsis)
 target_link_libraries(mwos PUBLIC mwos_linkscript)
 
 if (EXISTS ${openocd_executable})
