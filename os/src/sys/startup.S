@@ -95,15 +95,9 @@ __isr_vector:
 	EXCP PendSV
 	EXCP SysTick
 
-    .globl  Default_Handler
-    .type   Default_Handler, %function
-Default_Handler:
-    b       .
-    .size   Default_Handler, . - Default_Handler
-
     .macro  IRQ handler
     .weak   \handler
-    .set    \handler, Default_Handler
+    .set    \handler, __unhandled_user_irq
     .endm
 	
 	IRQ TIMER_IRQ_0_Handler  
