@@ -22,7 +22,7 @@ int main() {
 
 	// SCHEDULER LOOP
 	while (1) {
-		while (global_tm.ready_to_resume()) global_tm.pop_next().resume();
+		while (global_tm.ready_to_resume()) global_tm.resume_next();
 		// ticks, etc.
 	}
 }

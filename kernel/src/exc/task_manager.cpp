@@ -25,7 +25,7 @@ namespace mwk::exc {
 	}
 
 	std::coroutine_handle<> detail::resume_token::tail_call() {
-		if (current_state() == suspended) return parent->pop_next();
+		if (current_state() == suspended) return ecf::symmetric_transfer(parent->pop_next());
 		return std::noop_coroutine();
 	}
 

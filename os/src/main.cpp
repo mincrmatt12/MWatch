@@ -59,7 +59,7 @@ int main() {
 
 	// SCHEDULER LOOP
 	while (1) {
-		if (global_tm.ready_to_resume()) global_tm.pop_next().resume();
+		if (global_tm.ready_to_resume()) global_tm.resume_next();
 		// ticks, etc.
 		mwos::delay.process();
 	}

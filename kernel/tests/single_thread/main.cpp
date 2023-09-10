@@ -49,7 +49,7 @@ int main() {
 
 	while (global_task_manager.has_waiting_tasks()) {
 		std::cout << "now:: " << cur_time << "\n";
-		while (global_task_manager.ready_to_resume()) global_task_manager.pop_next().resume();
+		while (global_task_manager.ready_to_resume()) global_task_manager.resume_next();
 		++cur_time;
 		global_delayer.process_wakeup_at_time(cur_time);
 	}

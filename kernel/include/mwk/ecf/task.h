@@ -1,11 +1,12 @@
 #pragma once
 
 #include <coroutine>
-#include <bit>
 #include "../utl/err.h"
 #include "../utl/result.h"
 #include "./sys_error.h"
 #include "mwk/ecf/throw.h"
+#include "./symtransfer.h"
+#include <utility>
 
 namespace mwk::ecf {
 	template<typename T>
@@ -39,9 +40,9 @@ namespace mwk::ecf {
 					// Expecting promise to be a common_task_promise, so it has a result()
 					auto& promise = coro.promise();
 					if (promise.exception_reraise_thunk && promise.result().is_error())
-						return promise.exception_reraise_thunk(promise.result().get_encoded_error(), promise.continuation);
+						return symmetric_transfer(promise.exception_reraise_thunk(promise.result().get_encoded_error(), promise.continuation));
 					else
-						return promise.continuation;
+						return symmetric_transfer(promise.continuation);
 				}
 			};
 
@@ -66,6 +67,7 @@ namespace mwk::ecf {
 				// Evil hackery: the first address of the coroutine handle is the resume ptr, which is set to nullptr when the coroutine has hit its final suspend.
 				// We can set it to that to convince the compiler that the coroutine has terminated early
 				*(reinterpret_cast<void **>(coro.address())) = nullptr;
+				// This is not wrapped in symmetric_transfer because the inner suspend should be.
 				return instance.final_suspend().await_suspend(coro_promise);
 			}
 
@@ -231,7 +233,7 @@ namespace mwk::ecf {
 			}
 			std::coroutine_handle<> await_suspend(std::coroutine_handle<> caller) noexcept {
 				coro.promise().continue_in(caller);
-				return coro;
+				return symmetric_transfer(coro);
 			}
 			decltype(auto) await_resume() noexcept {
 				if constexpr (Move) {

@@ -26,6 +26,8 @@ target_sources(mwos PRIVATE ${os_srcs})
 
 add_subdirectory(boot)
 add_subdirectory(pio)
+
+set(MWKERNEL_EMULATE_SYMTRANSFER TRUE)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../kernel mwkernel)
 
 target_link_libraries(mwos PRIVATE

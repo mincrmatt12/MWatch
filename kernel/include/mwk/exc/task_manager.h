@@ -174,8 +174,12 @@ namespace mwk::exc {
 
 		// Polling-based API for resuming tasks in threads (generally suited for single-threaded use w/o preemption)
 		bool ready_to_resume() const;
-		// Resume the next coroutine. Only valid when ready_to_resume() == true
+		// Get the next-to-resume coroutine. Only valid when ready_to_resume() == true
 		std::coroutine_handle<> pop_next();
+		// Resume the coroutine.
+		inline void resume_next() {
+			ecf::resume_trampoline(pop_next());
+		}
 
 		// Check if any tasks are ready to execute
 		bool has_waiting_tasks() const;

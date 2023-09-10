@@ -21,6 +21,14 @@ endif()
 
 set(MWKERNEL_BUILD_STANDALONE_TESTS FALSE CACHE BOOL "enable for standalone compile")
 
+if (NOT DEFINED MWKERNEL_EMULATE_SYMTRANSFER)
+	set(MWKERNEL_EMULATE_SYMTRANSFER FALSE CACHE BOOL "enable to fake symmetric transfer for thumb1")
+endif()
+
+if (${MWKERNEL_EMULATE_SYMTRANSFER})
+	target_compile_definitions(mwkernel PUBLIC -DMWKERNEL_EMULATE_SYMTRANSFER=1)
+endif()
+
 if (MWKERNEL_BUILD_STANDALONE_TESTS)
 	add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/tests)
 endif()
