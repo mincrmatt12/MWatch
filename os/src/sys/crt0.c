@@ -10,6 +10,7 @@
 #include <hardware/xosc.h>
 #include <hardware/pll.h>
 #include <hardware/watchdog.h>
+#include <hardware/structs/padsbank0.h>
 
 void setup_clocks() {
     clocks_hw->resus.ctrl = 0;
@@ -131,6 +132,10 @@ void Reset_Handler(void) {
     ));
 	setup_clocks();
 	unreset_block_wait(RESETS_RESET_BITS);
+
+	// set to 1.8v
+	padsbank0_hw->voltage_select = PADS_BANK0_VOLTAGE_SELECT_VALUE_1V8;
+	
 	uart_stdio_init();
 	main();
 	// trap on main return
