@@ -34,24 +34,25 @@ pixloop:
 .define thhGCK 12   ; 10 * 4 = 40  clock cycles = ~4us
 
 .side_set 2 opt ; sideset: BSP,GEN
-; two bits for delays: should be just barely enough
 
 .wrap_target
-    ; entry point: setup BSP
-    mov x, y               side 0b10   [3]      ;; setup GSP (assume GCK is already low -- it should be, and the init code sets it there as well)
-	mov pins, ~null                    [3]      ;; pulse clock (-1 delay for irq)
+    mov x, y               side 0b10   [3]      ; Reset horizontal counter.
+	mov pins, ~null                    [3]      ; Set BCK high for first fake reset cycle.
 pixloop:   
-	irq wait IRQ_HSYNC                          ;; SYNC WITH DATAOUT (both should continue execution at same time afaict)
-	mov pins, ~pins                                        
-	jmp x--, pixloop       side 0b00            ;; RESET GSP (do it now to look slightly more like the datasheet since we can)
+	irq wait IRQ_HSYNC                          ; Synchronize with dataout sm (in case a FIFO underrun slowed it down)
+												; There is no bug about the first clock cycle here -- we get the data ready on the falling
+												; edge of the fake cycle - (2) in the datasheet - and it is sampled on the next loop around at precisely
+												; the right time.
+	mov pins, ~pins                             ; Flip the clock at ~50% duty (see chart in dataout)
+	jmp x--, pixloop       side 0b00            ; Loop back -- also, reset GSP at this point (in case this was the first clock cycle)
 	; AFTER LINE done; do GEN pulse (GCK should now have just been set to zero -- delay)
-	set x, (thwGEN-3)      side 0b01   [2]      ;; full clock cycle  (-1 from jump, -1 from counter)  ---- setup thwGEN
+	set x, (thwGEN-3)      side 0b01   [2]      ; full clock cycle  (-1 from jump, -1 from counter)  ---- setup thwGEN
 	mov pins, null                     [3]
 gendelay:
-	jmp x--, gendelay                  [3]      ;; keep gen pulsed
-public entry_point:                             ;; start here to start in a waiting state
-	wait 1 irq IRQ_VSYNC   side 0b00            ;; sync with vertical clock (this one does a GCK pulse)
-	wait 1 irq IRQ_VSYNC                        ;; sync with vertical clock for after GCK toggle (ensure thsBSP >= 0)
+	jmp x--, gendelay                  [3]      ; keep gen pulsed
+public entry_point:                             ; start here to start in a waiting state
+	wait 1 irq IRQ_VSYNC   side 0b00            ; sync with vertical clock (this one does a GCK pulse)
+	wait 1 irq IRQ_VSYNC                        ; sync with vertical clock for after GCK toggle (ensure thsBSP >= 0)
 .wrap
 
 .program ls012_vclk
@@ -61,30 +62,24 @@ public entry_point:                             ;; start here to start in a wait
 .side_set 1 ; GSP only
 
 .wrap_target
-   ; wait for notification from cpu to start -- CPU MUST ASSERT INTB at this point by writing the correct instruction here
-   irq wait IRQ_DONE                  side 0
-   set pins, 0b01     [thsINTB_GSP]   side 0
-   ; turn on start pulse + setup counter
-   mov x, y           [thsINTB_GSP]   side 1
-   ; hold one clock cycle
-   set pins, 0b11     [thwGCK-1]      side 1
-   irq wait IRQ_VSYNC [1]             side 1
-   mov pins, ~pins                    side 1
-   jmp  continue                      side 0
+   irq wait IRQ_DONE                  side 0    ; wait for notification from cpu to start (and conversely, notify the CPU when frame is finished scanning)
+   set pins, 0b01     [thsINTB_GSP]   side 0    ; set INTB high and wait thsINTB_GSP
+   mov x, y           [thsINTB_GSP]   side 1    ; turn on GSP (via sideset) and reset vertical counter (previously set by CPU instruction)
+   set pins, 0b11     [thwGCK-1]      side 1    ; Run one clock cycle with GSP high (cannot use loop because sideset)
+   irq wait IRQ_VSYNC [1]             side 1    ; Acknowledge the first wait at the start of the HCLK sm
+   mov pins, ~pins                    side 1    ; Flip GCK back to 0 in preparation for first line
+   jmp  continue                      side 0    ; Enter main loop while also setting GSP back to 0
 lineloop:
-   ; sync with horizontal
-   irq wait IRQ_VSYNC [1]             side 0   ; reset GSP from first loop
-   ; flip gck
-   mov pins, ~pins                    side 0   
+   irq wait IRQ_VSYNC [1]             side 0    ; Sync after starting HCLK output (waits till output is finished)
+   mov pins, ~pins                    side 0    ; Flip clock
 continue:
-   irq wait IRQ_VSYNC                 side 0   ; notify GSP done (triggers actual pulse)
-   ; loop
-   jmp x--, lineloop                  side 0
+   irq wait IRQ_VSYNC                 side 0    ; Sync after clock is definitely pulsed (starts next line of output)
+   jmp x--, lineloop                  side 0    ; Decrement line counter and loop.
    ; DONE SCREEN, one final clock cycle
-   mov pins, ~null    [thwGCK-1]      side 0
+   mov pins, ~null    [thwGCK-1]      side 0    ; Spec requires one final clock clock cycle
    mov pins,  null    [thwGCK-1]      side 0
    mov pins, ~null    [thwGCK-1]      side 0
    mov pins,  null    [3]             side 0
-   set pins, 0b00                     side 0
+   set pins, 0b00                     side 0    ; Clear INTB
    ; CPU gets notification from irq; it should clear out the clk / whatever with some expediency 
 .wrap

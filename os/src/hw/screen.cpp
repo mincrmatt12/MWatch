@@ -42,7 +42,7 @@ namespace mwos::screen {
 	//
 	// When accessing aligned pairs of bits, just writing a single value to the array works; however manipulating a single pixel requires
 	// bitwise operations.
-	uint16_t fb_data[120*240];
+	uint16_t fb_data[120*240]{};
 
 	const static inline uint reconfig_dma = 0;
 	const static inline uint fifo_dma = 1;
@@ -51,7 +51,7 @@ namespace mwos::screen {
 		struct {
 			uint32_t ctrl; uint32_t write_addr{PIO0_BASE + PIO_TXF2_OFFSET}; uint32_t len; const uint16_t * row_ptr;
 		} list_buf[2][4];
-		uint16_t blank[2];
+		uint16_t blank[2] {};
 		uint8_t buf_idx = 0;
 		uint8_t row_idx = 0;
 
@@ -69,10 +69,9 @@ namespace mwos::screen {
 		    /* prevent fifo from restarting reconf */ fifo_dma << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB;
 
 		void fill() {
-			list_buf[buf_idx][0].row_ptr = &fb_data[row_idx * 240];
-			list_buf[buf_idx][2].row_ptr = &fb_data[row_idx * 240];
+			list_buf[buf_idx][0].row_ptr = &fb_data[row_idx * 120];
+			list_buf[buf_idx][2].row_ptr = &fb_data[row_idx * 120];
 
-			buf_idx = 1 - buf_idx;
 			++row_idx;
 		}
 
@@ -86,11 +85,14 @@ namespace mwos::screen {
 
 			buf_idx = row_idx = 0;
 			fill();
+			buf_idx = 1;
 			fill();
+			buf_idx = 0;
 		}
 
 		void blast() {
 			dma_channel_set_read_addr(reconfig_dma, &list_buf[buf_idx][0], true);
+			buf_idx = 1 - buf_idx;
 		}
 
 		int row_being_sent() const {
@@ -111,9 +113,7 @@ namespace mwos::screen {
 	mwk::task<void> power_up() {
 		// STEP 1: TURN ON POWER SUPPLIES
 
-		pwr::set_3v2_enable(true);
-		co_await mwos::delay.by(2);
-		pwr::set_5v_enable(true);
+		co_await pwr::set_5v_enable(true);
 		co_await mwos::delay.by(2);
 
 		// STEP 1a: INIT PERIPHERALS
@@ -187,7 +187,7 @@ namespace mwos::screen {
 		sm_config_set_out_pins(&data_config, 8, 6);
 		sm_config_set_in_shift(&data_config, false, false, 0);
 		sm_config_set_fifo_join(&data_config, PIO_FIFO_JOIN_TX);
-		sm_config_set_out_shift(&data_config, true, true, 16);
+		sm_config_set_out_shift(&data_config, true, true, 15);
 		pio_sm_init(pio, 2, data_offset, &data_config);
 
 		puts("inited pios");
@@ -260,7 +260,7 @@ namespace mwos::screen {
 		gpio_disable_pulls(15);
 
 		auto pwm_cfg = pwm_get_default_config();
-		pwm_config_set_clkdiv_int(&pwm_cfg, 200);
+		pwm_config_set_clkdiv_int(&pwm_cfg, 70);
 		pwm_config_set_wrap(&pwm_cfg, 47999);
 		pwm_config_set_output_polarity(&pwm_cfg, true, false);
 

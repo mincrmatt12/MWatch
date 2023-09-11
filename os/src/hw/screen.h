@@ -29,10 +29,15 @@ namespace mwos::screen {
 	// framebuffer helpers
 	
 	static inline void set_pixel(int x, int y, uint8_t color) {
+		// TODO: #ifdef rotation
+
+		x = 240 - x;
+		y = 240 - y;
+
 		uint16_t old = fb_data[(x / 2) + y*120];
 		if (x % 2)
-			fb_data[(x / 2) + y*120] = (old & ~0b00'111'000'00'111'000) | ((color & 0b111) << 3) | ((color & 0b111'000) << 11);
+			fb_data[(x / 2) + y*120] = (old & ~0b00'111'000'00'111'000) | ((color & 0b111) << 3) | ((color & 0b111'000) << 8);
 		else
-			fb_data[(x / 2) + y*120] = (old & ~0b00'000'111'00'000'111) | ((color & 0b111) << 0) | ((color & 0b111'000) << 8);
+			fb_data[(x / 2) + y*120] = (old & ~0b00'000'111'00'000'111) | ((color & 0b111) << 0) | ((color & 0b111'000) << 5);
 	}
 }
