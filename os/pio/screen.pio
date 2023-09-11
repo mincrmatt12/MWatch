@@ -11,21 +11,38 @@
 ;; HCLK:    run at 12mhz, 5 cycles = 416 ns;  1 cyc = 83ns                                       || clkdiv 8   from 96
 ;; VCLK:    run at 274khz                                                                        || clkdiv 350 from 96 
 
+;; DATAOUT is the only SM whose FIFO needs to be fed. It expects the entire frame to be sent top-to-bottom as 16-bit words. Only the low 6 bits
+;; are considered, which are sent directly to the RGB0/1 pins. The pins are assigned with the even (0-based) pixels in the low 3 bits ordered
+;; as BGRBGR. The panel itself expects you to send the MSB all in one line and LSB right after (physically the 'two bits' are really just differently
+;;    543210
+;; sized lines of 1-bit pixels). Also, DATAOUT expects you send 2 zero values following each bitplane of each line (well, in practice these are counted
+;; as 1 before and 1 after but sending them after and ensuring the first frame is black -- which is mandatory anyways -- is equivalent due to the FIFO
+;; and simplifies the CPU/DMA setup) which are used for the extra dummy clock cycles in each line. This strategy only works if the PIO is kept powered
+;; at all times after initialization, otherwise a single dummy zero must be fed to the FIFO (presumably synchronously pre-dma) to keep the display in sync.
+
+;; HCLK is what drives the Horizontal CLocK signals: BSP, BCK & GEN. It synchronizes with DATAOUT to keep the clock in phase, and with VCLK to synchronize
+;; with GCK. It uses a mov pins, ~pins instruction to invert the clock in one instruction and uses the sideset to manage BSP & GEN. After looping 121 times
+;; (and thus sending 121+1 = 122 clock transitions) it synchronizes with VCLK twice: first to tell it to flip GCK and then again to wait for it to finish
+;; flipping GCK (as clock speed difference between the two state machines is too large to wait for the irq wait to finish executing there directly).
+
+;; VCLK drives the remaining Vertical CLocK signals: INTB, GCK, GSP. It uses every trick in the book to save instructions: set is configured to 
+;; control both INTB & GCK while mov will only read/write GCK, with the side-set controlling GSP directly inline. 
+
+
 .wrap_target
 	; reset counter
-	mov x, y
+	mov x, y   ; y is set to 479 by the CPU
 pixloop:
-	; sync with ls012_hclk  ( and wait for frame start )
-	wait 1 irq IRQ_HSYNC         [6] ;; ------ DATAOUT ---------- HCLK -------  0 cycles (sync'd here) TODO: may need some tweaking   (loop, 10/5 cyc)
+	; Sync with the HCLK state machine -- they execute in lockstep after the wait finishes
+	wait 1 irq IRQ_HSYNC         [6] ;; ------ DATAOUT ---------- HCLK -------  0 cycles  (loop, 10/5 cyc)
 	; BEGIN OUTPUTTING               ;;                       
 	                                 ;;                        1cyc (during wait postdelay) <--- clock changed (previous value asserted)
 									 ;;                        2cyc (during wait postdelay)    |
 	out pins, 6                      ;; 7  cyc                 3.5cyc    (actual output)  <----|  new data asserted (halfway through)
-	out null, 16                     ;; 8  cyc                 4cyc
-	; loop                                                                            
+	out null, 16                     ;; 8  cyc                 4cyc                               clear sr & prepare for autopull
+									 ;; 														  unfortunately we can't pull here directly
+	; loop                                                                                        so it's imperative the FIFO is kept well-fed
 	jmp x--, pixloop                 ;; 9 cyc                      
-	; AFTER LOOP: reset pins
-	; mov pins, null
 .wrap ; jump back for next line
 	
 .program ls012_hclk
@@ -36,7 +53,7 @@ pixloop:
 .side_set 2 opt ; sideset: BSP,GEN
 
 .wrap_target
-    mov x, y               side 0b10   [3]      ; Reset horizontal counter.
+    mov x, y               side 0b10   [3]      ; Reset horizontal counter (y = 121 from CPU) and set BSP high.
 	mov pins, ~null                    [3]      ; Set BCK high for first fake reset cycle.
 pixloop:   
 	irq wait IRQ_HSYNC                          ; Synchronize with dataout sm (in case a FIFO underrun slowed it down)
@@ -44,7 +61,7 @@ pixloop:
 												; edge of the fake cycle - (2) in the datasheet - and it is sampled on the next loop around at precisely
 												; the right time.
 	mov pins, ~pins                             ; Flip the clock at ~50% duty (see chart in dataout)
-	jmp x--, pixloop       side 0b00            ; Loop back -- also, reset GSP at this point (in case this was the first clock cycle)
+	jmp x--, pixloop       side 0b00            ; Loop back -- also, reset BSP at this point (in case this was the first clock cycle)
 	; AFTER LINE done; do GEN pulse (GCK should now have just been set to zero -- delay)
 	set x, (thwGEN-3)      side 0b01   [2]      ; full clock cycle  (-1 from jump, -1 from counter)  ---- setup thwGEN
 	mov pins, null                     [3]
@@ -57,6 +74,9 @@ public entry_point:                             ; start here to start in a waiti
 
 .program ls012_vclk
 
+;; VCLK keeps its interrupt (IRQ_DONE) constantly asserted while waiting for the next frame -- the CPU should acknowledge it by clearing the 
+;; CPU interrupt mask, not actually resetting the flag in the PIO as that will immediately start a new frame.
+
 .define thsINTB_GSP 3
 .define thwGCK 16 ; 16 total cycles: just under the proper time but whatever
 .side_set 1 ; GSP only
@@ -64,7 +84,7 @@ public entry_point:                             ; start here to start in a waiti
 .wrap_target
    irq wait IRQ_DONE                  side 0    ; wait for notification from cpu to start (and conversely, notify the CPU when frame is finished scanning)
    set pins, 0b01     [thsINTB_GSP]   side 0    ; set INTB high and wait thsINTB_GSP
-   mov x, y           [thsINTB_GSP]   side 1    ; turn on GSP (via sideset) and reset vertical counter (previously set by CPU instruction)
+   mov x, y           [thsINTB_GSP]   side 1    ; turn on GSP (via sideset) and reset vertical counter (previously set y = 121 by CPU instruction)
    set pins, 0b11     [thwGCK-1]      side 1    ; Run one clock cycle with GSP high (cannot use loop because sideset)
    irq wait IRQ_VSYNC [1]             side 1    ; Acknowledge the first wait at the start of the HCLK sm
    mov pins, ~pins                    side 1    ; Flip GCK back to 0 in preparation for first line
@@ -81,5 +101,5 @@ continue:
    mov pins, ~null    [thwGCK-1]      side 0
    mov pins,  null    [3]             side 0
    set pins, 0b00                     side 0    ; Clear INTB
-   ; CPU gets notification from irq; it should clear out the clk / whatever with some expediency 
+   ; Wrap back to irq wait to notify CPU we are ready for next frame.
 .wrap
