@@ -7,6 +7,9 @@
 
 #define NRFX_TWIM_ENABLED 1
 #define NRFX_TWIM0_ENABLED 1
+#define NRFX_UARTE_ENABLED 1
+#define NRFX_UARTE0_ENABLED 1
+#define NRFX_GPIOTE_ENABLED 1
 
 #include <templates/nrfx_config_common.h>
 #include <templates/nrfx_config_nrf52832.h>

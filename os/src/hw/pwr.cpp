@@ -1,17 +1,20 @@
 #include "./pwr.h"
-#include "pico/platform.h"
+#include "hardware/gpio.h"
+#include "../kcore/delay.h"
 #include <cstdio>
 
-void mwos::pwr::set_5v_enable(bool on) {
-	// DBG: print out
-	printf("activate 5v %d\n", on);
-	//while (getchar() != '5') tight_loop_contents();
-	puts("done");
+void mwos::pwr::init() {
+	gpio_init(26);
+	gpio_put(26, false);
+	gpio_set_dir(26, true);
+	gpio_put(26, false);
 }
 
-void mwos::pwr::set_3v2_enable(bool on) {
+mwk::task<void> mwos::pwr::set_5v_enable(bool on) {
 	// DBG: print out
-	printf("activate 3v2 %d\n", on);
-	//while (getchar() != '3') tight_loop_contents();
+	printf("activate 5v %d\n", on);
+	co_await delay.by(50);
+	gpio_put(26, on);
+	co_await delay.by(50);
 	puts("done");
 }
