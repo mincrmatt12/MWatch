@@ -23,15 +23,18 @@ file(GLOB_RECURSE os_srcs FOLLOW_SYMLINKS
 
 add_executable(mwos)
 target_sources(mwos PRIVATE ${os_srcs})
+target_include_directories(mwos PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src)
 
 add_subdirectory(boot)
 add_subdirectory(pio)
+add_subdirectory(res)
 
 set(MWKERNEL_EMULATE_SYMTRANSFER TRUE)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../kernel mwkernel)
 
 target_link_libraries(mwos PRIVATE
 	mwos_pios
+	mwos_res
 	mwkernel
 	boot_rom_stage2
 	picosdk
@@ -50,6 +53,7 @@ target_compile_options(mwos
 add_library(mwos_linkscript INTERFACE)
 target_link_options(mwos_linkscript INTERFACE
 	LINKER:--script LINKER:${CMAKE_CURRENT_LIST_DIR}/ld/kernel.ld
+	LINKER:--Map=$<TARGET_FILE:mwos>.map
 	LINKER:--gc-sections
 	LINKER:--nmagic
 )

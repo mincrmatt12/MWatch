@@ -5,9 +5,10 @@ set(MWOS_PIOS_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/include/mwos_pios)
 add_library(mwos_pios INTERFACE)
 target_include_directories(mwos_pios INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
 
+file(MAKE_DIRECTORY ${MWOS_PIOS_DIR})
+
 function(add_pio_target target_name pio_source_file)
 	add_custom_command(OUTPUT ${MWOS_PIOS_DIR}/${target_name}.h
-		COMMAND ${CMAKE_COMMAND} -E make_directory ${MWOS_PIOS_DIR}
 		COMMAND ${PIOASM_EXECUTABLE} ${pio_source_file} ${MWOS_PIOS_DIR}/${target_name}.h
 		MAIN_DEPENDENCY ${pio_source_file}
 	)

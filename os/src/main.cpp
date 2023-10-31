@@ -6,39 +6,26 @@
 
 #include <mwk/exc/task_manager.h>
 
+#include "draw/font.h"
+#include "draw/rect.h"
+
+#include <font/djv_16.h>
+#include <font/lato_32.h>
+
 // Global task manager
 mwk::exc::task_manager global_tm;
 
-void draw_frame(int idx) {
-	for (int color = 0; color < 64 ;++color) {
-		for (int y = 130; y < 150; ++y) mwos::screen::set_pixel(80+color, y, (idx+color) % 0x40);
-	}
-}
+uint8_t pack_color(int id) {
+	int r = id % 4;
+	int g = (id / 4) % 4;
+	int b = (id / 16) % 4;
 
-void set_big_text(int x, int y, uint8_t c) {
-	x -= 100;
-	y -= 119;
+	//g = b = 2;
 
-	x*= 2;
-	y*= 2;
-
-	x += 100;
-	y += 119;
-
-	for (int ox = 0; ox < 2; ++ox) {
-		for (int oy = 0; oy < 2; ++oy) {
-			mwos::screen::set_pixel(x+ox, y+oy, c);
-		}
-	}
+	return (r & 1) | (g & 1) << 1 | (b & 1) << 2 | (r >> 1) << 3 | (g >> 1) << 4 | (b >> 1) << 5;
 }
 
 mwk::task<void> main_task() {
-	puts("hi!");
-	puts("hi!");
-	puts("hi!");
-	puts("hi!");
-	puts("hi!");
-	
 	using namespace mwos::screen;
 	
 	// turn on the screen (dbg)
@@ -46,50 +33,19 @@ mwk::task<void> main_task() {
 
 	// write "HI" and a line
 	
-	for (int y = 0; y < 50; ++y) {
-		for (int x = 120 - y; x < 120 + y; ++x) {
-			set_pixel(x, y, (x + y) % 0x40);
-		}
-	}
-	for (int y = 240-50; y < 240; ++y) {
-		int off = 240 - y;
-		for (int x = 120 - off; x < 120 + off; ++x) {
-			set_pixel(x, y, (x + y) % 0x40);
-		}
-	}
-	
-	set_big_text(100, 120, 0b100100);
-	set_big_text(100, 119, 0b100100);
-	set_big_text(100, 121, 0b100100);
-	set_big_text(101, 120, 0b100100);
-	set_big_text(102, 119, 0b100100);
-	set_big_text(102, 120, 0b100100);
-	set_big_text(102, 121, 0b100100);
-
-	set_big_text(104, 121, 0b010010);
-	set_big_text(104, 119, 0b010010);
-	set_big_text(105, 119, 0b010010);
-	set_big_text(105, 120, 0b010010);
-	set_big_text(105, 121, 0b010010);
-	set_big_text(106, 121, 0b010010);
-	set_big_text(106, 119, 0b010010);
-
-	set_big_text(108, 119, 0b111001);
-	set_big_text(108, 120, 0b111001);
-	set_big_text(108, 121, 0b111001);
-	set_pixel(116, 122, 0);
-	set_pixel(117, 122, 0);
-	set_pixel(116, 123, 0);
-	set_pixel(117, 123, 0);
-
-	puts("ready");
-
-	// the multicolored line
-	
 	int idx = 0;
 	while (true) {
 		co_await scanout_and_wait_frame();
-		draw_frame(idx++);
+
+		mwos::draw::fill(0);
+		++idx;
+		char buf[32]; snprintf(buf, 32, "r: %d, g: %d, b: %d", idx % 4, (idx / 4) % 4, (idx / 16) % 4);
+		puts(buf);
+		mwos::draw::text(50, 80, "color tester", mwos::res::font::djv_16, 0b111'000);
+		mwos::draw::text(10, 120, buf, mwos::res::font::lato_32, 0xff);
+		mwos::draw::rect(15, 130, 200, 180, pack_color(idx % 0x40));
+
+		co_await mwos::delay.by(250);
 	}
 }
 

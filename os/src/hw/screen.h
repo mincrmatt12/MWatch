@@ -31,13 +31,23 @@ namespace mwos::screen {
 	static inline void set_pixel(int x, int y, uint8_t color) {
 		// TODO: #ifdef rotation
 
-		x = 240 - x;
-		y = 240 - y;
+		x = 239 - x;
+		y = 239 - y;
 
 		uint16_t old = fb_data[(x / 2) + y*120];
 		if (x % 2)
-			fb_data[(x / 2) + y*120] = (old & ~0b00'111'000'00'111'000) | ((color & 0b111) << 3) | ((color & 0b111'000) << 8);
+			// explicitly clear upper two bits so that two adjacent set_pixels should be optimized away.
+			fb_data[(x / 2) + y*120] = (old & ~0b11'111'000'11'111'000) | ((color & 0b111) << 3) | ((color & 0b111'000) << 8);
 		else
-			fb_data[(x / 2) + y*120] = (old & ~0b00'000'111'00'000'111) | ((color & 0b111) << 0) | ((color & 0b111'000) << 5);
+			fb_data[(x / 2) + y*120] = (old & ~0b11'000'111'11'000'111) | ((color & 0b111) << 0) | ((color & 0b111'000) << 5);
+	}
+
+	static inline void set_dual_pixel(int x, int y, uint8_t color1, uint8_t color2) {
+		// TODO: #ifdef rotation
+
+		x = 238 - x;
+		y = 239 - y;
+
+		fb_data[(x / 2) + y*120] = (color1 & 0b111) | (color2 & 0b111) << 3 | (color1 & 0b111'000) << 5 | (color2 & 0b111'000) << 8;
 	}
 }

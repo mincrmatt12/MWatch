@@ -1,0 +1,7 @@
+#pragma once
+
+#include "draw/font.h"
+
+namespace mwos::res::font {
+	extern const ::mwos::draw::font @GENERATED_SYMBOL_NAME@;
+};
